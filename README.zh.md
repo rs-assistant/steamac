@@ -827,7 +827,7 @@ GitHub release 说明（Markdown，内嵌）与该 release 的下载地址；对
 
 启动器向开发者自己的 Sentry 服务器（`sentry.fxgam.es`，经 SwiftPM 的
 sentry-cocoa 9.30.0 SDK）发送崩溃报告与少量错误。
-默认开启；设置 → 通用中**发送崩溃报告和诊断信息**复选框、首次启动窗口或创建 SteamOS 磁盘窗口可关闭（“发送内容”链接展示下表）。关闭后
+默认关闭；设置 → 通用中**发送崩溃报告和诊断信息**复选框、首次启动窗口或创建 SteamOS 磁盘窗口可开启（“发送内容”链接展示下表）。关闭后
 SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）。单次启动：`--no-crash-reports` 或 `STEAMAC_SENTRY=0`。
 
 发送内容：

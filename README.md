@@ -1238,7 +1238,7 @@ host/launcher/appcast.sh --local http://127.0.0.1:8765` after each, and
 ## Crash reports (Sentry)
 
 The launcher sends crash reports and a few errors to the developers' own Sentry server
-(`sentry.fxgam.es`, sentry-cocoa 9.30.0 SDK via SwiftPM). Enabled by default; disable it with the
+(`sentry.fxgam.es`, sentry-cocoa 9.30.0 SDK via SwiftPM). Disabled by default; enable it with the
 **Send crash reports and diagnostics** checkbox in Settings → General, in the first-launch window,
 or in the Create SteamOS Disk window (the “What is sent” link displays the list below). When disabled,
 the SDK does not start at all and makes no network connections (reports already saved on disk remain
