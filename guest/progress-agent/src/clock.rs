@@ -51,13 +51,17 @@ pub fn decide(host_ns: i128, guest_ns: i128) -> Decision {
     }
 }
 
-/// `time <unix_ns>` -> unix ns.
+/// Latest host time accepted: 2200-01-01T00:00:00Z. Anything later is a corrupt line, and
+/// keeps the step's seconds far inside time_t.
+pub const HOST_MAX_NS: i128 = 7_258_118_400 * NS;
+
+/// `time <unix_ns>` -> unix ns (0 < ns <= HOST_MAX_NS).
 pub fn parse(line: &str) -> Option<i128> {
     let (cmd, arg) = line.trim().split_once(' ')?;
     if cmd != "time" {
         return None;
     }
-    arg.trim().parse::<i128>().ok().filter(|ns| *ns > 0)
+    arg.trim().parse::<i128>().ok().filter(|ns| *ns > 0 && *ns <= HOST_MAX_NS)
 }
 
 fn realtime_ns() -> i128 {
@@ -151,6 +155,9 @@ mod tests {
         assert_eq!(parse("time abc"), None);
         assert_eq!(parse("resumed 5"), None);
         assert_eq!(parse("time"), None);
+        assert_eq!(parse(&format!("time {HOST_MAX_NS}")), Some(HOST_MAX_NS));
+        assert_eq!(parse(&format!("time {}", HOST_MAX_NS + 1)), None);
+        assert_eq!(parse("time 170141183460469231731687303715884105727"), None);
     }
 
     #[test]

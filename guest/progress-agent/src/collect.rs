@@ -189,10 +189,18 @@ fn collect(id: &str, game: Option<u32>) -> Result<Vec<u8>, String> {
     let steam = PathBuf::from(
         std::env::var("FX_PROGRESS_STEAM_ROOT").unwrap_or_else(|_| format!("{home}/.local/share/Steam")),
     );
-    let base = PathBuf::from(format!("/tmp/.fx-logs-{}-{id}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    // A private, freshly created directory: $XDG_RUNTIME_DIR (0700, this user's) when the user
+    // manager provides it, else /tmp. create() fails if the name exists, so another local user
+    // cannot have prepared it; 0700 keeps the unscrubbed copies unreadable to others.
+    let runtime = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/tmp".into());
+    let base = PathBuf::from(format!("{runtime}/.fx-logs-{}-{id}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);   // our own leftover; never follows a symlink
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(&base).map_err(|e| format!("mkdir {}: {e}", base.display()))?;
+    }
     let dir = base.join("steamos-logs");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    std::fs::create_dir(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let result = gather(&dir, &steam, Path::new(&home), game).and_then(|_| pack(&base));
     let _ = std::fs::remove_dir_all(&base);
     result
