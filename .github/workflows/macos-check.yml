@@ -52,7 +52,7 @@ jobs:
           git -C "$src" fetch -q --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
           test "$(git -C "$src" rev-parse "$TAG^{commit}")" = "$COMMIT"
           git -C "$src" checkout -q --detach "$COMMIT"
-          for p in host/libkrun/patches/*.patch; do git -C "$src" apply "$p"; done
+          for p in "$PWD"/host/libkrun/patches/*.patch; do git -C "$src" apply "$p"; done
           mkdir -p "$RUNNER_TEMP/krun/include"
           cp "$src"/include/libkrun.h "$src"/include/libkrun_display.h "$src"/include/libkrun_input.h "$RUNNER_TEMP/krun/include/"
 
