@@ -61,10 +61,14 @@ struct GamesTab: View {
         }
         .onAppear {
             recommendations.reset()
-            for game in games { recommendations.fetch(game.appid) }
+            for game in games { recommendations.fetch(game.appid, sharing: settings.shareGameStats) }
         }
         .onChange(of: games.map(\.appid)) { _, ids in
-            for id in ids { recommendations.fetch(id) }
+            for id in ids { recommendations.fetch(id, sharing: settings.shareGameStats) }
+        }
+        .onChange(of: settings.shareGameStats) { _, on in
+            recommendations.reset()
+            for game in games { recommendations.fetch(game.appid, sharing: on) }
         }
     }
 }
@@ -118,7 +122,7 @@ private struct GameProfileRow: View {
             }
             recommendation
         }
-        .onAppear { env = profile.env; recommendations.fetch(appid) }
+        .onAppear { env = profile.env; recommendations.fetch(appid, sharing: settings.shareGameStats) }
         .alert("Allow DXMT?", isPresented: $showSecurity) {
             Button("Allow DXMT") { settings.wmtr = true }
             Button("Cancel", role: .cancel) {}
@@ -137,6 +141,9 @@ private struct GameProfileRow: View {
                 }.disabled(!row.usable)
             }
         case .loading: Text("Recommended: loading…").font(.caption).foregroundStyle(.secondary)
+        case .sharingOff:
+            Text("Recommended: needs Share game statistics (the lookup sends this game and the Mac's RAM and GPU size to the statistics service)")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         default: Text("Recommended: unavailable").font(.caption).foregroundStyle(.secondary)
         }
     }

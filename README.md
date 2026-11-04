@@ -461,7 +461,10 @@ items are skipped with a log line). Items that password managers mark as conceal
 (`org.nspasteboard.ConcealedType` / `TransientType`) stay on the Mac unless **Include concealed
 (password manager) items** is on. The launcher checks the pasteboard's `changeCount` on a 0.5 s
 timer only while the app is active and the VM runs, and once on every activation — never in the
-background, while suspended or asleep; images from SteamOS land on the Mac as PNG + TIFF.
+background, while suspended or asleep; images from SteamOS land on the Mac as PNG + TIFF. SteamOS
+can replace the Mac clipboard only while the app is active: a copy made in SteamOS while the app is
+in the background (or the VM is paused) is held and applied on the next activation, unless the
+Mac's clipboard changed in the meantime (then the newer Mac copy wins and goes to SteamOS).
 
 Transport: the virtio-console port `fx.clipboard`, framed binary messages (`HELLO` / `STATE` /
 `SET` with sequence numbers / `ACK`; `host/launcher/Sources/steamac-vm/Clipboard.swift`,

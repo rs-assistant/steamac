@@ -238,9 +238,14 @@ final class ClipboardSync {
         didSet {
             guard vmPaused != oldValue else { return }
             updateTimer()
-            if !vmPaused { check() }
+            if !vmPaused { applyHeldSet(); check() }
         }
     }
+    /// The latest SteamOS → Mac SET that arrived while the app was in the background or the VM was
+    /// paused, with the pasteboard's changeCount at that moment. The guest may only replace the
+    /// Mac clipboard while the user is in FX Steam Launcher: it is applied on activation if the
+    /// Mac's pasteboard did not change in between (a newer Mac copy wins), otherwise dropped.
+    private var heldSet: (frame: ClipCodec.Frame, changeCount: Int)?
     private var lastChangeCount: Int
     /// changeCount whose concealed item was already logged as kept on the Mac.
     private var loggedConcealed = -1
@@ -280,13 +285,14 @@ final class ClipboardSync {
     func setAppActive(_ active: Bool) {
         guard active != appActive else { return }
         appActive = active
-        if active { check() }
+        if active { applyHeldSet(); check() }
         updateTimer()
     }
 
     private func setEnabled(_ on: Bool) {
         guard on != enabled else { return }
         enabled = on
+        if !on { heldSet = nil }
         log("clipboard: sharing \(on ? "on" : "off")")
         if guestConnected {
             sendState()
@@ -404,6 +410,12 @@ final class ClipboardSync {
             log("clipboard: SteamOS → Mac #\(f.seq) while sharing is off: ignored")
             return ack(f.seq, .rejected)
         }
+        guard appActive, !vmPaused else {
+            if let old = heldSet { log("clipboard: SteamOS → Mac #\(old.frame.seq) superseded by #\(f.seq) before it was applied") }
+            heldSet = (f, pasteboard.changeCount)
+            log("clipboard: SteamOS → Mac #\(f.seq) while FX Steam Launcher is in the background: held until it is active")
+            return
+        }
         guard let (text, png) = ClipCodec.parseSet(f.payload), text != nil || png != nil,
               (text?.count ?? 0) <= ClipCodec.textMax, (png?.count ?? 0) <= ClipCodec.imageMax else {
             log("clipboard: SteamOS → Mac #\(f.seq): malformed or over the limits, ignored")
@@ -426,6 +438,16 @@ final class ClipboardSync {
         lastHash = h
         log("clipboard: SteamOS → Mac #\(f.seq): \(ClipCodec.describe(text: text, png: png))")
         ack(f.seq, .applied)
+    }
+
+    private func applyHeldSet() {
+        guard let held = heldSet, enabled, appActive, !vmPaused else { return }
+        heldSet = nil
+        guard pasteboard.changeCount == held.changeCount else {
+            log("clipboard: SteamOS → Mac #\(held.frame.seq) dropped: the Mac's clipboard changed after it arrived")
+            return ack(held.frame.seq, .rejected)
+        }
+        guestSet(held.frame)
     }
 
     /// --selftest-settings: frame codec round trip / resync and the concealed-type filter.
