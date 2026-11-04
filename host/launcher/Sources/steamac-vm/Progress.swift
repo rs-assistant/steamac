@@ -432,9 +432,24 @@ final class BootProgress {
     }
 
     /// "1920x1200" -> (1920, 1200); nil unless both are positive integers.
+    /// --selftest-settings: guest-supplied sizes stay within the limits.
+    static func limitsSelfCheck() -> [String] {
+        var failures: [String] = []
+        if pixelSize("1280x800").map({ $0 == (1280, 800) }) != true { failures.append("progress: 1280x800 not parsed") }
+        for bad in ["99999999999x1", "0x800", "1280x-1", "\(maxSurfaceSide + 1)x1", "1x\(Int.max)", "1280x"] where pixelSize(bad) != nil {
+            failures.append("progress: surface size \(bad) accepted")
+        }
+        return failures
+    }
+
+    /// Largest surface side accepted from the guest (above any real display; keeps the pointer
+    /// arithmetic that uses it far from Int32 overflow).
+    static let maxSurfaceSide = 16384
+
     static func pixelSize(_ s: String) -> (Int, Int)? {
         let v = s.split(separator: "x", omittingEmptySubsequences: false)
-        guard v.count == 2, let w = Int(v[0]), let h = Int(v[1]), w > 0, h > 0 else { return nil }
+        guard v.count == 2, let w = Int(v[0]), let h = Int(v[1]),
+              (1...maxSurfaceSide).contains(w), (1...maxSurfaceSide).contains(h) else { return nil }
         return (w, h)
     }
 

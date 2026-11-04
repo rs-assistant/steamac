@@ -107,6 +107,8 @@ final class GuestLogs {
     private let port: ProgressPort
     private var lastAlive: CFTimeInterval = 0
     private var pending: (id: String, size: Int?, data: Data, done: (Result<Data, OptionError>) -> Void)?
+    /// Largest guest log bundle accepted (Report a Problem uploads at most 20 MB in total).
+    static let maxBundle = 64 << 20
 
     init(port: ProgressPort) { self.port = port }
 
@@ -126,12 +128,20 @@ final class GuestLogs {
         let rest = parts.count > 2 ? parts[2] : ""
         switch parts[0] {
         case "logs-begin":
-            p.size = Int(rest)
-            p.data.reserveCapacity(p.size ?? 0)
+            guard let size = Int(rest), (0...Self.maxBundle).contains(size) else {
+                finish(.failure(OptionError("bundle size \(rest) outside 0...\(Self.maxBundle)"))); return true
+            }
+            p.size = size
+            p.data.reserveCapacity(size)
             pending = p
         case "logs":
             guard let chunk = Data(base64Encoded: rest) else { finish(.failure(OptionError("corrupt chunk"))); return true }
-            pending?.data.append(chunk)
+            guard p.data.count + chunk.count <= (p.size ?? Self.maxBundle) else {
+                finish(.failure(OptionError("bundle larger than announced"))); return true
+            }
+            pending = nil   // `p` is then the only owner: append in place, not to a copy
+            p.data.append(chunk)
+            pending = p
         case "logs-end":
             let digest = SHA256.hash(data: p.data).map { String(format: "%02x", $0) }.joined()
             if p.size != p.data.count {

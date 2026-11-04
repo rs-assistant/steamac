@@ -73,12 +73,17 @@ enum Supervisor {
         sweepStaleRunDirs()
         // sun_path is 104 bytes on macOS: keep the run dir short.
         let dir = "/tmp/steamac-\(getpid())"
+        // Our own leftover of a reused pid goes; another user's entry cannot be removed (sticky
+        // /tmp) and makes mkdir fail below. Never reuse an existing directory: it could belong to
+        // another local user (config.img, sockets and logs live here), so it must be ours and new.
         try? FileManager.default.removeItem(atPath: dir)
-        do {
-            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-        } catch {
-            fatal("cannot create \(dir): \(error)")
+        guard mkdir(dir, 0o700) == 0 else {
+            fatal("cannot create \(dir): \(String(cString: strerror(errno))) (if it exists, another user may own it)")
+        }
+        var st = stat()
+        guard lstat(dir, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR, st.st_uid == getuid(),
+              chmod(dir, 0o700) == 0 else {   // mkdir's mode is masked by umask: set it exactly
+            fatal("\(dir) is not a directory owned by this user")
         }
         RollingLog.launcher.open(dir: dir)
 

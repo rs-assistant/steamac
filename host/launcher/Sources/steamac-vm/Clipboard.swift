@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 
 /// Frames of the `fx.clipboard` port, shared with the guest agent
 /// (guest/progress-agent/src/clipboard.rs has the full description):
@@ -17,6 +18,19 @@ enum ClipCodec {
     static let header = 16
     static let textMax = 1 << 20
     static let imageMax = 16 << 20
+    /// Decoded size limit for a SteamOS image (pixels): a small PNG can declare a huge canvas.
+    static let imagePixelsMax = 64 << 20
+
+    /// Width and height from the PNG header (ImageIO reads only the properties, no pixels).
+    static func pngPixels(_ png: Data) -> Int? {
+        guard let src = CGImageSourceCreateWithData(png as CFData, nil), CGImageSourceGetCount(src) >= 1,
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              w > 0, h > 0 else { return nil }
+        let (n, overflow) = w.multipliedReportingOverflow(by: h)
+        return overflow ? Int.max : n
+    }
     static let maxPayload = textMax + imageMax + 1024
     static let mimeText = "text/plain;charset=utf-8"
     static let mimePNG = "image/png"
@@ -421,6 +435,12 @@ final class ClipboardSync {
             log("clipboard: SteamOS → Mac #\(f.seq): malformed or over the limits, ignored")
             return ack(f.seq, .rejected)
         }
+        if let png {
+            guard let pixels = ClipCodec.pngPixels(png), pixels <= ClipCodec.imagePixelsMax else {
+                log("clipboard: SteamOS → Mac #\(f.seq): image is not a readable PNG or above \(ClipCodec.imagePixelsMax >> 20) MP, ignored")
+                return ack(f.seq, .rejected)
+            }
+        }
         let h = ClipCodec.hash(text: text, png: png)
         guard h != lastHash else { return ack(f.seq, .same) }
         let item = NSPasteboardItem()
@@ -472,6 +492,12 @@ final class ClipboardSync {
             || isConcealed([.string, .png]) {
             failures.append("clipboard: concealed/transient classification")
         }
+        // A 1x1 PNG passes; one declaring 40000x40000 (1.6 GP) is refused before any decoding.
+        let tiny = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=")!
+        let huge = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAnEAAAJxACAYAAABRDA4FAAAADElEQVR4nGNgoAwAAABAAAG3NHzvAAAAAElFTkSuQmCC")!
+        if ClipCodec.pngPixels(tiny) != 1 { failures.append("clipboard: 1x1 PNG size not read") }
+        if let n = ClipCodec.pngPixels(huge), n <= ClipCodec.imagePixelsMax { failures.append("clipboard: oversized PNG accepted") }
+        if ClipCodec.pngPixels(Data("not a png".utf8)) != nil { failures.append("clipboard: non-PNG has a size") }
         return failures
     }
 }
