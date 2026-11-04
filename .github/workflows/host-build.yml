@@ -44,6 +44,9 @@ jobs:
           df -h .
 
       - name: MoltenVK
+        # The paravirtual GPU has no mesh shaders: the geometry-shader repros cannot pass here.
+        env:
+          STEAMAC_REPRO_FAILURE_OK: "1"
         run: host/moltenvk/build.sh
       - name: libepoxy
         run: host/libepoxy/build.sh

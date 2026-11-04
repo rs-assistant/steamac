@@ -157,7 +157,13 @@ fi
 # --- repros: gamescope compute pipelines, geometry shaders, null pipeline binds
 echo ">> repro: gamescope compute pipelines, geometry shaders, null pipeline binds"
 repro_log=$work/repro.log
-"$here/repro/run.sh" "$stage/lib" > "$repro_log" 2>&1 || { cat "$repro_log"; exit 1; }
+if ! "$here/repro/run.sh" "$stage/lib" > "$repro_log" 2>&1; then
+	cat "$repro_log"
+	# CI only (GitHub's macOS runners have Apple's paravirtual GPU: no mesh shaders, so the
+	# geometry-shader repros abort there). Never set this for a build you ship.
+	[ "${STEAMAC_REPRO_FAILURE_OK:-}" = 1 ] || exit 1
+	echo "WARNING: repros FAILED; continuing because STEAMAC_REPRO_FAILURE_OK=1 (not a shippable build)" | tee -a "$repro_log" >&2
+fi
 grep -v '^\[mvk-info\]\|^	' "$repro_log"
 
 # --- install (temp + rename, never rewrite a mapped dylib in place)
