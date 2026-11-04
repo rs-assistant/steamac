@@ -1033,13 +1033,13 @@ extension WindowController {
         let now = Date()
         if guestCursor == nil || now.timeIntervalSince(lastPointerMotion) > WindowController.reanchorAfterIdle {
             let (sw, sh) = pointerMap.surface
-            let far = -Int32(4 * (max(sw, scanoutSize.0) + max(sh, scanoutSize.1)))
+            let far = -Int32(clamping: 4 * (max(sw, scanoutSize.0) + max(sh, scanoutSize.1)))
             inputs.mouse.send([(EV.REL, REL.X, far), (EV.REL, REL.Y, far)])
             guestCursor = (0, 0)
         }
         lastPointerMotion = now
         let (cx, cy) = guestCursor!
-        let dx = Int32(target.0 - cx), dy = Int32(target.1 - cy)
+        let dx = Int32(clamping: target.0 - cx), dy = Int32(clamping: target.1 - cy)
         guard dx != 0 || dy != 0 else { return }
         var ev: [(UInt16, UInt16, Int32)] = []
         if dx != 0 { ev.append((EV.REL, REL.X, dx)) }

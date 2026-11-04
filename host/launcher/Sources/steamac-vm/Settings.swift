@@ -700,10 +700,21 @@ final class LauncherSettings: ObservableObject {
         reloadGames()
     }
 
-    /// `game <appid> <name>` from the guest agent.
-    func setGameName(_ name: String, for appid: Int) {
+    /// Limits for guest-supplied game names (stored in the defaults, shown in Settings and alerts).
+    static let gameNameMax = 128, gameNamesMax = 2000
+
+    /// `game <appid> <name>` from the guest agent: control characters removed, length and number
+    /// of remembered games capped.
+    func setGameName(_ raw: String, for appid: Int) {
+        let name = String(String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
+            .trimmingCharacters(in: .whitespaces).prefix(Self.gameNameMax))
+        guard !name.isEmpty else { return }
         var names = defaults.dictionary(forKey: Key.gameNames.rawValue) as? [String: String] ?? [:]
         guard names[String(appid)] != name else { return }
+        guard names[String(appid)] != nil || names.count < Self.gameNamesMax else {
+            log("settings: not remembering the name of game \(appid): already \(names.count) games")
+            return
+        }
         names[String(appid)] = name
         defaults.set(names, forKey: Key.gameNames.rawValue)
         reloadGames()
