@@ -869,8 +869,13 @@ fi
 # one); anything after it belongs to init and is kept verbatim at the end.
 # steamac.ssh=0 adds systemd.ssh_auto=no: systemd-ssh-generator then creates
 # none of its sshd-unix-local/-vsock/-unix-export sockets (see "SSH switch").
+# SSH is on only with an explicit steamac.ssh=1: absent or invalid means 0.
 SSH=$(getarg steamac.ssh)
-case $SSH in 0|1|"") ;; *) warn "ignoring steamac.ssh='$SSH' (0 or 1)"; SSH= ;; esac
+case $SSH in
+    0|1) ;;
+    "") msg "steamac.ssh not given: SSH server off (pass steamac.ssh=1 to enable)"; SSH=0 ;;
+    *) warn "ignoring steamac.ssh='$SSH' (0 or 1): SSH server off"; SSH=0 ;;
+esac
 _keep=
 for _a in $KARGS; do
     case $_a in
@@ -899,10 +904,11 @@ fi
 
 # ---------------------------------------------------------------- SSH switch
 # Contract "SSH policy": the launcher passes steamac.ssh=0|1 on every boot
-# (release app default 0). 0 = no SSH server at all this boot: runtime masks
-# (independent of steamac.nomask) for the rootfs's sshd.service and every unit
-# systemd-ssh-generator (systemd 257) can create, on top of systemd.ssh_auto=no
-# above. 1 or absent = sshd as enabled in /etc (var-X upper enables it).
+# (release app default 0). 0, absent or invalid = no SSH server at all this
+# boot: runtime masks (independent of steamac.nomask) for the rootfs's
+# sshd.service and every unit systemd-ssh-generator (systemd 257) can create,
+# on top of systemd.ssh_auto=no above. Only 1 = sshd as enabled in /etc (var-X
+# upper enables it).
 if [ "$SSH" = 0 ]; then
     for _unit in sshd.service sshd@.service sshd.socket \
                  sshd-unix-local.socket sshd-unix-local@.service sshd-vsock.socket sshd-vsock@.service \

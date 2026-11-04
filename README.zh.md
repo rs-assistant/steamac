@@ -176,7 +176,8 @@ gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换�
 
 SSH 一键开关：**设置 → 高级 → 启用 SSH**（或 `--ssh-port N` /
 `--no-ssh`）。每次启动时启动器传递 `steamac.ssh=0|1`：为 0 时 Mac 上根本不开端口
-（无转发的 gvproxy），initramfs 在 SteamOS 中屏蔽 sshd。开发版启动器（`work/out/steamac-vm`、`./run.sh`，端口 2222）默认开启，
+（无转发的 gvproxy），initramfs 在 SteamOS 中屏蔽 sshd；
+未传该参数（或值无效）时 initramfs 同样关闭 SSH。开发版启动器（`work/out/steamac-vm`、`./run.sh`，端口 2222）默认开启，
 `FX Steam Launcher.app` 默认关闭（Info.plist 中 `SteamacReleaseDefaults` 键，由 `bundle.sh` 设置）。开启后，
 启动器为 `steamos` 用户生成密码（20 字符，SecRandomCopyBytes），
 按磁盘 GPT GUID 分别存于钥匙串，下次启动只把其 SHA-512 crypt 哈希传给客户机（“配置载荷”盘，`steamac.config=1`；客户机回复

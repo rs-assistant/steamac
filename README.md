@@ -206,7 +206,8 @@ Guest access: `ssh -p 2222 steamos@127.0.0.1`, password `steamos` (change via
 
 SSH is toggled with one switch: **Settings → Advanced → Enable SSH** (or `--ssh-port N` /
 `--no-ssh`). On each boot the launcher passes `steamac.ssh=0|1`: with 0, the Mac port is not opened
-at all (gvproxy without forwarding), and initramfs masks sshd in SteamOS. By default SSH is enabled
+at all (gvproxy without forwarding), and initramfs masks sshd in SteamOS;
+without the parameter (or with an invalid value) initramfs keeps SSH off as well. By default SSH is enabled
 in the dev launcher (`work/out/steamac-vm`, `./run.sh`, port 2222) and disabled in
 `FX Steam Launcher.app` (the `SteamacReleaseDefaults` key in Info.plist, set by `bundle.sh`). When
 enabled, the launcher generates a password for user `steamos` (20 characters, SecRandomCopyBytes),

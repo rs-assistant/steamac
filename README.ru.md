@@ -204,7 +204,8 @@ heartbeat не ждётся, пока агент новой сессии его 
 
 SSH включается и выключается одним переключателем: **Настройки → Дополнительно → Включить SSH** (или
 `--ssh-port N` / `--no-ssh`). Лаунчер на каждой загрузке передаёт `steamac.ssh=0|1`: при 0 порт на
-Mac не открывается вовсе (gvproxy без проброса), а initramfs маскирует sshd в SteamOS. По умолчанию
+Mac не открывается вовсе (gvproxy без проброса), а initramfs маскирует sshd в SteamOS;
+без параметра (или с неверным значением) initramfs тоже оставляет SSH выключенным. По умолчанию
 SSH включён у dev-лаунчера (`work/out/steamac-vm`, `./run.sh`, порт 2222) и выключен в
 `FX Steam Launcher.app` (ключ `SteamacReleaseDefaults` в Info.plist, ставит `bundle.sh`). При
 включении лаунчер генерирует пароль пользователя `steamos` (20 символов, SecRandomCopyBytes),
