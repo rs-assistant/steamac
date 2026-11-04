@@ -9799,6 +9799,22 @@
           }
         }
       }
+    },
+    "Recommended: needs Share game statistics (the lookup sends this game and the Mac's RAM and GPU size to the statistics service)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рекомендация: нужно включить «Делиться статистикой игр» (запрос отправляет сервису статистики эту игру и объём RAM и GPU этого Mac)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推荐：需开启“共享游戏统计”（查询会将此游戏及这台 Mac 的内存和 GPU 规格发送到统计服务）"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

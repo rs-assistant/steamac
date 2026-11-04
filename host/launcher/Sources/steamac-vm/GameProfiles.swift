@@ -88,13 +88,17 @@ struct GameRecommendation: Decodable {
 }
 
 /// Lifetime is one Games tab opening; failed lookups are quiet and are not retried while open.
+/// A lookup tells the statistics service which game this Mac has and its RAM/GPU/P-core counts,
+/// so it runs only while Settings `shareGameStats` is on (the user agreed to talk to the service).
 final class GameRecommendations: ObservableObject {
-    enum State { case loading, unavailable, found(GameRecommendation) }
+    enum State { case loading, unavailable, sharingOff, found(GameRecommendation) }
     @Published private(set) var rows: [Int: State] = [:]
     private var generation = UUID()
     func reset() { generation = UUID(); rows = [:] }
-    func fetch(_ appid: Int) {
+    /// `sharing`: Settings `shareGameStats`; off = no request, the row says why.
+    func fetch(_ appid: Int, sharing: Bool) {
         guard rows[appid] == nil else { return }
+        guard sharing else { rows[appid] = .sharingOff; return }
         guard let base = ProcessInfo.processInfo.environment[GameStatsStore.urlEnv].flatMap(URL.init(string:))
                 ?? (Bundle.main.object(forInfoDictionaryKey: "SteamacGameStatsURL") as? String).flatMap(URL.init(string:)),
               var c = URLComponents(url: base.appendingPathComponent("v1/games/\(appid)"), resolvingAgainstBaseURL: false) else {

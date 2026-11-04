@@ -390,6 +390,8 @@ proc on /newroot/proc: Operation not permitted` 退出。
 与 PNG 图片可粘贴到 SteamOS（Ctrl+V——Steam 文本框、游戏与桌面模式应用），反向亦可；文本上限 1 MiB、单图 16 MiB（超限跳过并记日志）。密码管理器标为隐藏或临时
 （`org.nspasteboard.ConcealedType` / `TransientType`）的内容保留在 Mac，除非开启**包含隐藏（密码管理器）内容**。启动器只在应用活跃且虚拟机运行时每 0.5 秒检查粘贴板
 `changeCount`，每次激活检查一次——后台、挂起或睡眠时从不检查；SteamOS 来的图片落在 Mac 上为 PNG + TIFF。
+只有应用处于活动状态时 SteamOS 才能替换 Mac 剪贴板：应用在后台（或 VM 暂停）时在 SteamOS 中的复制会先保留，
+下次激活时再应用；若期间 Mac 剪贴板已变化，则以较新的 Mac 内容为准并发往 SteamOS。
 
 传输：virtio-console 端口 `fx.clipboard`，定帧二进制消息（`HELLO` / `STATE` /
 带序号 `SET` / `ACK`；`host/launcher/Sources/steamac-vm/Clipboard.swift`、
