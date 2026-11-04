@@ -202,7 +202,11 @@ rust_graph(root / 'guest/progress-agent/Cargo.toml', '', 'aarch64-unknown-linux-
 
 # go version -m describes the exact binary (including versions other than the current
 # module graph). Download each module to an isolated, persistent cache, never a guess.
-goenv = dict(os.environ, GOMODCACHE=str(cache), GOWORK='off')
+# The user's Go configuration (go env -w, GOPROXY/GOSUMDB/GOFLAGS) does not apply: sources come
+# from the public proxy, verified against sum.golang.org and the binary's own recorded sums.
+goenv = dict(os.environ, GOMODCACHE=str(cache), GOWORK='off', GOENV='off', GOFLAGS='-modcacherw',
+             GOPROXY='https://proxy.golang.org', GOSUMDB='sum.golang.org', GONOSUMDB='', GOPRIVATE='',
+             GONOPROXY='', GOINSECURE='')
 for binary in ('gvproxy', 'desync'):
     location = res + '/' + binary
     lines = run('go', 'version', '-m', str(root / 'work/out/host/bin' / binary)).splitlines()
@@ -218,6 +222,9 @@ for binary in ('gvproxy', 'desync'):
         info = json.loads(run('go', 'mod', 'download', '-json', module + '@' + version, env=goenv, cwd=root))
         if info.get('Error'):
             raise RuntimeError(f'{module}@{version}: {info["Error"]}')
+        recorded = next((r for r in remainder if r.startswith('h1:')), None)
+        if recorded and info.get('Sum') != recorded:
+            raise RuntimeError(f'{binary}: {module}@{version}: downloaded sum {info.get("Sum")} != {recorded} recorded in the binary')
         path = Path(info['Dir'])
         docs = top_docs(path)
         # Some Go submodules inherit the parent repository's license. Go modules

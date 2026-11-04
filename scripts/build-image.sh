@@ -62,6 +62,15 @@ for step in "${steps[@]}"; do
             else
                 inputs=$(artifacts begin layer)
             fi
+            # 30-layer.sh copies guest/layer/usr as it is on disk, but the receipt hashes only
+            # files Git does not ignore: an ignored file (.DS_Store, editor backups) would ship
+            # without being bound to the inputs.
+            ignored=$(git -C "$REPO" ls-files -o -i --exclude-standard -- guest/layer/usr)
+            if [[ -n $ignored ]]; then
+                echo "layer: git-ignored files under guest/layer/usr would end up in the layer; remove them:" >&2
+                printf '  %s\n' $ignored >&2
+                exit 1
+            fi
             # guest/progress-agent (Rust, static musl) in the pinned rust container,
             # then the erofs layer (which installs the binary).
             docker run --rm --platform linux/arm64 \
