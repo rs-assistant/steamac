@@ -8,7 +8,12 @@ set -eu
 src=/build/linux-$KVER
 obj=/build/obj-$KVER
 tarball=/cache/linux-$KVER.tar.xz
-make_args="-C $src O=$obj ARCH=arm64 KBUILD_BUILD_USER=steamac KBUILD_BUILD_HOST=steamac"
+# Reproducible version string: fixed build number and date (the object dir lives in a
+# persistent volume, so .version would otherwise count up on every relink).
+epoch=${SOURCE_DATE_EPOCH:-1767225600}   # 2026-01-01, as the initramfs and layer
+build_date=$(LC_ALL=C date -u -d "@$epoch")
+make_args="-C $src O=$obj ARCH=arm64 KBUILD_BUILD_USER=steamac KBUILD_BUILD_HOST=steamac KBUILD_BUILD_VERSION=1"
+export KBUILD_BUILD_TIMESTAMP="$build_date"
 
 # Source tree: (re)extract + patch whenever the tarball or a patch changes.
 stamp=$(cat "$tarball" /steamac/patches/*.patch | sha256sum | cut -d' ' -f1)

@@ -116,7 +116,10 @@ step_fetch() {
     git -C "$src" init -q
     for p in "$here"/patches/*.patch; do git -C "$src" apply "$p" || die "$(basename "$p") does not apply"; done
     # meson's vcs_tag runs `git describe`; give it the fork commit the patches reproduce
-    git -C "$src" add -A && git -C "$src" -c user.name=build -c user.email=build@localhost \
+    # Fixed dates and no user git config/hooks: the same inputs give the same commit hash.
+    git -C "$src" add -A && GIT_AUTHOR_DATE=@1767225600 GIT_COMMITTER_DATE=@1767225600 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$src" -c user.name=build -c user.email=build@localhost \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null \
         commit -q -m "DXMT ${DXMT_FORK_COMMIT:0:12} (pinned base + host/dxmt/patches)"
 }
 
