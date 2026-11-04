@@ -1,6 +1,7 @@
-# Full macOS host stack on a GitHub-hosted Apple silicon Mac: MoltenVK, libepoxy, virglrenderer,
-# libkrun and the launcher (./build.sh host; KosmicKrisp needs macOS 26 and is skipped on
-# macos-15), then the launcher's selftests that need no guest. The runner is a VM with Apple's
+# Full macOS host stack on a GitHub-hosted Apple silicon Mac (macos-26): MoltenVK, libepoxy,
+# virglrenderer, libkrun and the launcher (the steps of ./build.sh host), then the launcher's
+# selftests that need no guest, then KosmicKrisp (optional step: its failure is reported but does
+# not fail the job). The runner is a VM with Apple's
 # paravirtual GPU and no nested virtualization: SteamOS does not boot here, and probes that need a
 # real Apple GPU feature may fail on it (the step log says which).
 name: macOS host build
@@ -23,7 +24,7 @@ concurrency:
 
 jobs:
   host:
-    runs-on: macos-15
+    runs-on: macos-26   # macos-15 arm64 jobs were repeatedly not acquired (capacity)
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
@@ -42,8 +43,16 @@ jobs:
           rustup --version
           df -h .
 
-      - name: Host stack (./build.sh host)
-        run: ./build.sh host
+      - name: MoltenVK
+        run: host/moltenvk/build.sh
+      - name: libepoxy
+        run: host/libepoxy/build.sh
+      - name: virglrenderer
+        run: host/virglrenderer/build.sh
+      - name: libkrun
+        run: host/libkrun/build.sh
+      - name: Launcher
+        run: host/launcher/build.sh
 
       - name: Selftests
         run: |
@@ -68,6 +77,10 @@ jobs:
           run --selftest-pill --selftest-out "$out/pill"
           run --selftest-game-layers
           exit $fail
+
+      - name: KosmicKrisp (optional)
+        continue-on-error: true
+        run: host/kosmickrisp/build.sh
 
       - name: Upload selftest output
         if: always()
