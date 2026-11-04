@@ -22,7 +22,7 @@ Metal 4 上的 Vulkan 驱动）是 macOS 26+ 上的实验性替代（见“Vulka
 - KosmicKrisp（可选，替代 Vulkan 驱动）：仅在 macOS 26+ 上构建；`host/kosmickrisp/build.sh`
   会安装其 Homebrew 依赖（`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`）。
 - OrbStack（或 arm64 且带 `--privileged` 的 Docker）：内核、Mesa 和磁盘映像在 Linux 容器中构建。
-- Homebrew 包：`meson ninja pkg-config dtc xz lld sshpass go`（`go`：用于捆绑的 gvproxy/desync 的许可证清单）。
+- Homebrew 包：`meson ninja pkg-config dtc xz lld sshpass go`（`go`：用固定版本的 Go 工具链从源码构建捆绑的 gvproxy/desync（`host/launcher/build-go-tool.sh`），并生成其许可证清单）。
 - libepoxy 1.5.10 由 `host/libepoxy/build.sh` 从锁定源码构建，先于 virglrenderer 和
   libkrun；三者均使用 `MACOSX_DEPLOYMENT_TARGET=15.0`，包括在 macOS 26/27 构建机上。
   打包会拒绝 Mach-O 部署目标高于 macOS 15.0 的文件（仅 KosmicKrisp 可要求 26.0）。
@@ -606,7 +606,7 @@ rootfs 哈希不符时再顺序读取，以区分错误的稀疏区段元数据�
 1. `https://steamdeck-atomupd.steamos.cloud/meta/holo/steamos/aarch64/vr/<branch>.json` → 最新候选（`update_path`、`chunks_store_path`）。
 2. 下载 `.raucb`（约 2 MB）；Security.framework 仅对照 Valve 固定 CA `CN=steamdeck-images`（`scripts/keys/steamdeck-images.pem`，SHA-256 指纹嵌入代码）校验其 CMS 签名，不用系统信任库。自研 squashfs 读取器（用锁定 zstd 发行版的 zstd，`fetch-zstd.sh`）解出 `manifest.raucm` 与 `rootfs.img.caibx`；检查
    `compatible=steamos-aarch64`、版本与槽大小。
-3. 官方 desync（`fetch-desync.sh`，锁定版本与 sha256）从 Valve 块存储（约 4.4 GB 数据）组装 10 GB `rootfs.img`；家目录卷上的磁盘用
+3. desync（`fetch-desync.sh`：从源码构建，锁定版本与 Go 模块校验和）从 Valve 块存储（约 4.4 GB 数据）组装 10 GB `rootfs.img`；家目录卷上的磁盘用
    `~/Library/Caches/es.fxgam.steamac` 中的 `desync/` 做块缓存，否则用磁盘旁 `<disk>.cache`
    （外接盘则内部不占缓存空间；成功后删除该目录）。故停止/创建（或 Ctrl+C 后重跑命令）可断点续传；之前某次在后续步骤失败而留下的完整 `<disk>.rootfs-tmp` 会先被删除（desync 不会复用它，保留只会让它占用两倍空间）。一个缓存一次只允许一次创建：第二次（另一窗口或 `--create-disk`）以“另一个 SteamOS 磁盘正在使用下载缓存 … 创建：请等待创建完成或取消该操作”停止（缓存目录中 `creation.lock` 的 `flock`），而非共享块缓存与临时文件。
 4. 稀疏磁盘文件：保护 MBR + GPT（主备，CRC32），名称、顺序、类型、大小与对齐与 `scripts/steps/40-disk.sh` 完全一致，PARTUUID 随机。一遍写入中，对 `rootfs.img` 哈希（sha256 须与签名 manifest 一致），16
