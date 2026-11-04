@@ -408,10 +408,11 @@ final class GameSessionTracker {
         updateActivity()
         guard let s = live.removeValue(forKey: id) else { return }
         let report = makeReport(s, end: how)
-        log("game stats: \(id) ended (\(how.rawValue)): ran \(report.runS) s, played \(report.playS) s, "
-            + "window \(report.launched ? "yes" : "no")"
-            + (report.fps.map { String(format: ", %.1f FPS avg, 1%% low %.1f", $0.avg, $0.low1) } ?? "")
-            + (report.mem?.hostMiB.map { ", host peak \($0) MiB" } ?? ""))
+        // Built in steps: as one expression it exceeds the type checker's budget (Swift 6.2.4).
+        let window: String = report.launched ? "yes" : "no"
+        let fps: String = report.fps.map { String(format: ", %.1f FPS avg, 1%% low %.1f", $0.avg, $0.low1) } ?? ""
+        let host: String = report.mem?.hostMiB.map { ", host peak \($0) MiB" } ?? ""
+        log("game stats: \(id) ended (\(how.rawValue)): ran \(report.runS) s, played \(report.playS) s, window \(window)\(fps)\(host)")
         store.record(report)
         // Offer sharing once, after a game the player saw (never while the VM shuts down).
         if how != .shutdown && report.launched { store.offerSharingIfNeeded(beside: vmWindow()) }
