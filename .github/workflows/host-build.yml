@@ -1,0 +1,78 @@
+# Full macOS host stack on a GitHub-hosted Apple silicon Mac: MoltenVK, libepoxy, virglrenderer,
+# libkrun and the launcher (./build.sh host; KosmicKrisp needs macOS 26 and is skipped on
+# macos-15), then the launcher's selftests that need no guest. The runner is a VM with Apple's
+# paravirtual GPU and no nested virtualization: SteamOS does not boot here, and probes that need a
+# real Apple GPU feature may fail on it (the step log says which).
+name: macOS host build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - host/**
+      - build.sh
+      - .github/workflows/host-build.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          system_profiler SPDisplaysDataType | sed -n '1,20p'
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          # README requirements (sshpass is only for SSH into a running guest)
+          brew install meson ninja pkg-config dtc xz lld go coreutils
+          rustup --version
+          df -h .
+
+      - name: Host stack (./build.sh host)
+        run: ./build.sh host
+
+      - name: Selftests
+        run: |
+          set -uo pipefail
+          out=$RUNNER_TEMP/selftest
+          mkdir -p "$out"
+          vm=work/out/steamac-vm
+          fail=0
+          run() {
+            echo "::group::$*"
+            if gtimeout 600 "$vm" "$@"; then echo "PASS $*"; else echo "FAIL ($?) $*"; fail=1; fi
+            echo "::endgroup::"
+          }
+          run --selftest-settings --selftest-out "$out/settings"
+          run --selftest-provision
+          run --selftest-pointer
+          run --selftest-remote-play
+          run --selftest-metal-cache
+          run --selftest-display --headless --selftest-out "$out/display"
+          run --selftest-overlay --selftest-out "$out/overlay"
+          run --selftest-stall --selftest-out "$out/stall"
+          run --selftest-pill --selftest-out "$out/pill"
+          run --selftest-game-layers
+          exit $fail
+
+      - name: Upload selftest output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: selftest-output
+          path: ${{ runner.temp }}/selftest
+          if-no-files-found: ignore
