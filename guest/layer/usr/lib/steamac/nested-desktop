@@ -46,7 +46,9 @@ nested=$outer/nested_plasma
 cleanup() {
     # Plasma's FUSE mounts (document portal, kio-fuse) live under it.
     umount --recursive "$nested" 2>/dev/null || true
-    rm -rf "$nested"
+    # A mount that could not be unmounted (busy, or left over from a crash) must not be
+    # descended into: rm would delete the files behind it.
+    rm -rf --one-file-system "$nested"
 }
 trap cleanup EXIT
 cleanup

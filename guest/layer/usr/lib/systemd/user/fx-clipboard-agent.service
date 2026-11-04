@@ -19,3 +19,12 @@ Restart=on-failure
 RestartSec=2
 TimeoutStopSec=3
 Nice=5
+# The agent starts no programs and only talks over AF_UNIX (X11, Wayland) and the
+# virtio port: confine it accordingly (seccomp-based, usable in a user unit).
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
