@@ -239,14 +239,26 @@ final class LauncherSettings: ObservableObject {
             }
         }
 
-        /// Settings > Advanced, shown after the library path.
+        /// Settings > Advanced, shown after the library path. dlopen runs the library's
+        /// initializers, so each path is probed once per process, not on every render.
         static func localizedUnavailableReason(_ path: String) -> String? {
+            if let known = probed[path] { return known }
+            let reason: String?
             switch problem(path) {
-            case .missing: return String(localized: "cannot be loaded")
-            case .notExecutor: return String(localized: "not a wmtr executor library")
-            case nil: return nil
+            case .missing: reason = String(localized: "cannot be loaded")
+            case .notExecutor: reason = String(localized: "not a wmtr executor library")
+            case nil: reason = nil
             }
+            probed[path] = reason
+            return reason
         }
+        nonisolated(unsafe) private static var probed: [String: String?] = [:]   // main thread only
+
+        /// The app bundle takes only its bundled executor from the settings: a library path in
+        /// the defaults could be written by any process of this user, and the app (library
+        /// validation off, hypervisor and microphone access) would load it. Another executor is
+        /// given on the command line (--wmtr-lib PATH); the dev launcher keeps the setting.
+        static var customFromSettingsAllowed: Bool { !AppBundle.releaseDefaults }
     }
 
     /// Default window size choices (window points = guest pixels).

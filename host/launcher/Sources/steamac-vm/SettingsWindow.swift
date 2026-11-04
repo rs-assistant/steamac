@@ -915,8 +915,9 @@ private struct AdvancedTab: View {
 
     /// The executor library the next start offers (bundled unless chosen) and whether it loads.
     private var wmtrStatus: (String, Bool) {
-        let path = LauncherSettings.Wmtr.path(for: settings.wmtrLibrary)
-        let shown = settings.wmtrLibrary.isEmpty
+        let custom = LauncherSettings.Wmtr.customFromSettingsAllowed ? settings.wmtrLibrary : ""
+        let path = LauncherSettings.Wmtr.path(for: custom)
+        let shown = custom.isEmpty
             ? String(localized: "Bundled: \(LauncherSettings.Wmtr.bundledLibrary)")
             : (settings.wmtrLibrary as NSString).abbreviatingWithTildeInPath
         guard let reason = LauncherSettings.Wmtr.localizedUnavailableReason(path) else { return (shown, true) }
@@ -1089,10 +1090,15 @@ private struct AdvancedTab: View {
                                 .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                             Spacer()
                         }
-                        HStack {
-                            Spacer()
-                            Button("Choose Library…") { chooseWmtrLibrary() }
-                            Button("Use Bundled") { settings.wmtrLibrary = "" }.disabled(settings.wmtrLibrary.isEmpty)
+                        if LauncherSettings.Wmtr.customFromSettingsAllowed {
+                            HStack {
+                                Spacer()
+                                Button("Choose Library…") { chooseWmtrLibrary() }
+                                Button("Use Bundled") { settings.wmtrLibrary = "" }.disabled(settings.wmtrLibrary.isEmpty)
+                            }
+                        } else {
+                            Text("Another executor library can only be given on the command line (--wmtr-lib PATH).")
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }

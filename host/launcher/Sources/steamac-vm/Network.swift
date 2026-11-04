@@ -23,6 +23,9 @@ final class Gvproxy {
 
     static func locate(explicit: String?) -> String? {
         if let explicit { return explicit }
+        // The app bundle runs its own Resources/gvproxy (AppBundle sets it) or --gvproxy only,
+        // never a copy found in Homebrew or PATH (another admin's binary, another version).
+        guard !AppBundle.releaseDefaults else { return nil }
         let exe = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let exeDir = exe.resolvingSymlinksInPath().deletingLastPathComponent().path
         let candidates = [

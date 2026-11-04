@@ -113,35 +113,49 @@ enum ClipCodec {
         n < 1024 ? "\(n) B" : n < 1 << 20 ? String(format: "%.1f KiB", Double(n) / 1024) : String(format: "%.1f MiB", Double(n) / 1048576)
     }
 
-    /// Incremental decoder; resynchronises on the magic after garbage.
+    /// Incremental decoder; resynchronises on the magic after garbage. Scans with a read cursor
+    /// and drops consumed bytes once per feed, so garbage costs linear time.
     struct Decoder {
         private var buf: [UInt8] = []
 
         mutating func feed(_ bytes: UnsafeRawBufferPointer) -> [Frame] {
             buf.append(contentsOf: bytes)
             var out: [Frame] = []
+            var pos = 0
+            defer { buf.removeFirst(pos) }
             while true {
-                guard let start = Decoder.find(magic, in: buf) else {
-                    buf.removeFirst(max(0, buf.count - 3))   // keep a possible partial magic
+                guard let start = Decoder.find(magic, in: buf, from: pos) else {
+                    pos = max(pos, buf.count - (magic.count - 1))   // keep a possible partial magic
                     return out
                 }
-                if start > 0 { buf.removeFirst(start) }
-                guard buf.count >= header else { return out }
-                let len = Int(buf[12]) | Int(buf[13]) << 8 | Int(buf[14]) << 16 | Int(buf[15]) << 24
-                guard let kind = Kind(rawValue: buf[4]), buf[5] == 0, buf[6] == 0, buf[7] == 0, len <= maxPayload else {
-                    buf.removeFirst()   // not a frame start
+                pos = start
+                guard buf.count - pos >= header else { return out }
+                let len = Int(buf[pos + 12]) | Int(buf[pos + 13]) << 8 | Int(buf[pos + 14]) << 16 | Int(buf[pos + 15]) << 24
+                guard let kind = Kind(rawValue: buf[pos + 4]), buf[pos + 5] == 0, buf[pos + 6] == 0, buf[pos + 7] == 0,
+                      len <= maxPayload else {
+                    pos += 1   // not a frame start
                     continue
                 }
-                guard buf.count >= header + len else { return out }
-                let seq = UInt32(buf[8]) | UInt32(buf[9]) << 8 | UInt32(buf[10]) << 16 | UInt32(buf[11]) << 24
-                out.append(Frame(kind: kind, seq: seq, payload: Data(buf[header..<header + len])))
-                buf.removeFirst(header + len)
+                guard buf.count - pos >= header + len else { return out }
+                let seq = UInt32(buf[pos + 8]) | UInt32(buf[pos + 9]) << 8 | UInt32(buf[pos + 10]) << 16 | UInt32(buf[pos + 11]) << 24
+                out.append(Frame(kind: kind, seq: seq, payload: Data(buf[pos + header..<pos + header + len])))
+                pos += header + len
             }
         }
 
-        private static func find(_ needle: [UInt8], in hay: [UInt8]) -> Int? {
-            guard hay.count >= needle.count else { return nil }
-            return (0...hay.count - needle.count).first { i in hay[i] == needle[0] && Array(hay[i..<i + needle.count]) == needle }
+        private static func find(_ needle: [UInt8], in hay: [UInt8], from: Int) -> Int? {
+            guard hay.count - from >= needle.count else { return nil }
+            var i = from
+            let last = hay.count - needle.count
+            while i <= last {
+                if hay[i] == needle[0] {
+                    var j = 1
+                    while j < needle.count && hay[i + j] == needle[j] { j += 1 }
+                    if j == needle.count { return i }
+                }
+                i += 1
+            }
+            return nil
         }
     }
 }
