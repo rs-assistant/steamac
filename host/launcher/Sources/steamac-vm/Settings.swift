@@ -309,8 +309,9 @@ final class LauncherSettings: ObservableObject {
     @Published var showStallIndicator = true { didSet { save(.showStallIndicator, showStallIndicator) } }
     @Published var openFullscreen = false { didSet { save(.openFullscreen, openFullscreen) } }
     @Published var perfStats = false { didSet { save(.perfStats, perfStats) } }
-    /// Crash reports and diagnostics through Sentry (CrashReporting); applies now.
-    @Published var sendCrashReports = true { didSet { save(.sendCrashReports, sendCrashReports) } }
+    /// Crash reports and diagnostics through Sentry (CrashReporting); off until the user turns it on.
+    /// Applies now.
+    @Published var sendCrashReports = false { didSet { save(.sendCrashReports, sendCrashReports) } }
     /// While the app is not active: mute the guest's sound / freeze the focused game.
     @Published var muteInBackground = true { didSet { save(.muteInBackground, muteInBackground) } }
     @Published var pauseInBackground = false { didSet { save(.pauseInBackground, pauseInBackground) } }

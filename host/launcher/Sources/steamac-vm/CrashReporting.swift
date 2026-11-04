@@ -7,8 +7,8 @@ import Sentry
 import Security
 import SystemConfiguration
 
-/// Crash and error reporting through Sentry (self-hosted, sentry.fxgam.es). Opt-out: Settings >
-/// General "Send crash reports and diagnostics" (`sendCrashReports`, on by default, also shown by
+/// Crash and error reporting through Sentry (self-hosted, sentry.fxgam.es). Opt-in: Settings >
+/// General "Send crash reports and diagnostics" (`sendCrashReports`, off by default, also shown by
 /// the first-run alert and the Create SteamOS Disk sheet); `--no-crash-reports` or
 /// `STEAMAC_SENTRY=0` turn it off for one run. Off = the SDK is never started (no network).
 ///
@@ -175,7 +175,7 @@ enum CrashReporting {
     /// The saved setting, read from the defaults store (the supervisor also sees changes the VM
     /// process's Settings window made).
     private static var settingAllows: Bool {
-        LauncherSettings.shared.defaults.object(forKey: LauncherSettings.Key.sendCrashReports.rawValue) as? Bool ?? true
+        LauncherSettings.shared.defaults.object(forKey: LauncherSettings.Key.sendCrashReports.rawValue) as? Bool ?? false
     }
 
     // MARK: setup
