@@ -9815,6 +9815,22 @@
           }
         }
       }
+    },
+    "Another executor library can only be given on the command line (--wmtr-lib PATH)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другую библиотеку-исполнитель можно указать только в командной строке (--wmtr-lib PATH)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他执行器库只能在命令行中指定（--wmtr-lib PATH）。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

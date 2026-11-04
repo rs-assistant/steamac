@@ -612,7 +612,12 @@ struct Options {
             ov[.wmtr] = flag
             ov[.wmtrLibrary] = flag
         } else {
-            wmtrLibrary = s.wmtr ? LauncherSettings.Wmtr.path(for: s.wmtrLibrary) : nil
+            var chosen = s.wmtrLibrary
+            if !chosen.isEmpty && !LauncherSettings.Wmtr.customFromSettingsAllowed {
+                if s.wmtr { log("wmtr: ignoring the executor library in the settings (\(chosen)); the app uses its bundled one (another: --wmtr-lib PATH)") }
+                chosen = ""
+            }
+            wmtrLibrary = s.wmtr ? LauncherSettings.Wmtr.path(for: chosen) : nil
         }
         if given("--no-sound") { ov[.soundEnabled] = "--no-sound" } else { sound = s.soundEnabled }
         if given("--share") || given("--no-share") {
