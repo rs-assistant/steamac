@@ -25,7 +25,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
         with:
           persist-credentials: false
 
@@ -38,6 +38,8 @@ jobs:
           sudo xcode-select -s "$xcode"
           xcodebuild -version
           swift --version
+          # README requirement (Homebrew go); build-go-tool.sh then fetches its pinned toolchain.
+          command -v go >/dev/null || brew install go
           go version
 
       - name: libkrun headers (pinned tag + host/libkrun/patches)
