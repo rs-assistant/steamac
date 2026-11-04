@@ -22,7 +22,7 @@ Metal 4) is an experimental alternative on macOS 26+ (see “Vulkan driver”).
 - KosmicKrisp (optional, alternative Vulkan driver): built only on macOS 26+; `host/kosmickrisp/build.sh`
   installs its Homebrew dependencies (`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`).
 - OrbStack (or Docker with arm64 and `--privileged`): the kernel, Mesa, and disk image are built in Linux containers.
-- Homebrew packages: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: license inventory of the bundled gvproxy/desync).
+- Homebrew packages: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: builds the bundled gvproxy/desync from source with a pinned Go toolchain, `host/launcher/build-go-tool.sh`, and their license inventory).
 - libepoxy 1.5.10 is built from pinned sources by `host/libepoxy/build.sh`, before virglrenderer and
   libkrun; all three use `MACOSX_DEPLOYMENT_TARGET=15.0`, including on macOS 26/27 build hosts.
   Bundling rejects Mach-O deployment targets above macOS 15.0 (KosmicKrisp alone may require 26.0).
@@ -711,7 +711,7 @@ This expected rejection is logged only; all other signature failures still repor
    embedded in the code); the system trust store is not used. A custom squashfs reader (using zstd
    from the pinned zstd release, `fetch-zstd.sh`) extracts `manifest.raucm` and `rootfs.img.caibx`;
    `compatible=steamos-aarch64`, the version, and the slot size are checked.
-3. Official desync (`fetch-desync.sh`, pinned version and sha256) assembles the 10 GB `rootfs.img`
+3. desync (`fetch-desync.sh`: built from source at a pinned version and Go module sum) assembles the 10 GB `rootfs.img`
    from Valve's chunk stores (~4.4 GB of data); the chunk cache is `desync/` in
    `~/Library/Caches/es.fxgam.steamac` for a disk on the home volume, otherwise in `<disk>.cache` next
    to the disk (an external drive then needs no internal space for it; the folder is removed after

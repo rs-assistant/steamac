@@ -22,7 +22,7 @@ Metal 4) — экспериментальная альтернатива на ma
 - KosmicKrisp (необязательно, альтернативный Vulkan-драйвер): собирается только на macOS 26+;
   `host/kosmickrisp/build.sh` сам ставит Homebrew-зависимости (`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`).
 - OrbStack (или Docker с arm64 и `--privileged`): ядро, Mesa и образ диска собираются в Linux-контейнерах.
-- Homebrew-пакеты: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: лицензии вложенных gvproxy/desync).
+- Homebrew-пакеты: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: сборка вложенных gvproxy/desync из исходников закреплённым Go-тулчейном, `host/launcher/build-go-tool.sh`, и их лицензии).
 - libepoxy 1.5.10 собирается из закреплённых исходников через `host/libepoxy/build.sh` перед
   virglrenderer и libkrun; все три используют `MACOSX_DEPLOYMENT_TARGET=15.0`, в том числе на
   macOS 26/27. Сборка бандла отклоняет Mach-O с deployment target выше macOS 15.0
@@ -711,7 +711,7 @@ SteamOS and Steam Client Back-Up Image» (тот же текст, что на с
    зашит в код); системное хранилище доверия не используется. Свой читатель squashfs (zstd из
    закреплённого релиза zstd, `fetch-zstd.sh`) достаёт `manifest.raucm` и `rootfs.img.caibx`;
    проверяются `compatible=steamos-aarch64`, версия и размер слота.
-3. Официальный desync (`fetch-desync.sh`, версия и sha256 закреплены) собирает 10-гигабайтный
+3. desync (`fetch-desync.sh`: собирается из исходников, версия и сумма Go-модуля закреплены) собирает 10-гигабайтный
    `rootfs.img` из хранилищ чанков Valve (~4,4 ГБ данных); кеш чанков — `desync/` в
    `~/Library/Caches/es.fxgam.steamac` для диска на томе домашней папки, иначе в `<диск>.cache`
    рядом с диском (внешнему диску тогда не нужно место на внутреннем; после успеха папка удаляется).
