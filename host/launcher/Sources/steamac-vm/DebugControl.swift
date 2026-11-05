@@ -55,6 +55,12 @@ enum DebugControl {
 
     static func start(path: String, window wc: WindowController, progress: BootProgress,
                       settingsWindow: SettingsWindowController, gamepad: GamepadBridge?, dump: @escaping (String) -> Void) {
+        // The FIFO drives the whole app (keys into the guest, settings, restart, report send):
+        // a test hook, never part of the app users run.
+        guard !AppBundle.releaseDefaults else {
+            log("control: --control-fifo is ignored in the release app (a test hook for development builds)")
+            return
+        }
         self.settingsWindow = settingsWindow
         self.gamepad = gamepad
         unlink(path)
@@ -62,22 +68,39 @@ enum DebugControl {
             log("control: cannot create FIFO \(path): \(String(cString: strerror(errno)))")
             return
         }
+        // Opened once, read-write: this process then always holds a writer, so the reader never
+        // sees EOF when `echo cmd > fifo` closes, and the path is never opened by name again (it
+        // could be replaced between opens). The FIFO must be the one just made: ours, and no one
+        // else may write commands into it.
+        let fd = open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            log("control: cannot open FIFO \(path): \(String(cString: strerror(errno)))")
+            return
+        }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFIFO, st.st_uid == getuid(),
+              st.st_mode & (S_IWGRP | S_IWOTH) == 0 else {
+            close(fd)
+            log("control: \(path) is not a FIFO of this user writable only by it; control commands are off")
+            return
+        }
+        guard let f = fdopen(fd, "r") else {
+            close(fd)
+            log("control: cannot read FIFO \(path): \(String(cString: strerror(errno)))")
+            return
+        }
         log("control: accepting commands on \(path)")
         let t = Thread {
-            while true {
-                // Re-open after each writer closes (echo cmd > fifo).
-                guard let f = fopen(path, "r") else { return }
-                var line: UnsafeMutablePointer<CChar>?
-                var cap = 0
-                while getline(&line, &cap, f) > 0 {
-                    let cmd = String(cString: line!).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !cmd.isEmpty {
-                        DispatchQueue.main.sync { handle(cmd, wc, progress, dump) }
-                    }
+            var line: UnsafeMutablePointer<CChar>?
+            var cap = 0
+            while getline(&line, &cap, f) > 0 {
+                let cmd = String(cString: line!).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cmd.isEmpty {
+                    DispatchQueue.main.sync { handle(cmd, wc, progress, dump) }
                 }
-                free(line)
-                fclose(f)
             }
+            free(line)
+            fclose(f)
         }
         t.name = "control-fifo"
         t.start()

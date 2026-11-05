@@ -225,7 +225,9 @@ status.
 Ordinary networking uses gvproxy user-mode NAT (`192.168.127.2` in SteamOS); LAN broadcasts
 do not cross that NAT. **Settings → Advanced → LAN Remote Play** (next start), or
 `--lan-remote-play`, enables a launcher-side discovery relay and same-port forwards:
-UDP **27031–27036**, TCP **27036–27037**, from the Mac to the guest. It is **off by default**:
+UDP **27031–27036**, TCP **27036–27037**, from the Mac to the guest. The forwards listen on the
+Mac's LAN (broadcast-capable IPv4) addresses only, not on loopback or VPN tunnels, and follow
+address changes while the VM runs. It is **off by default**:
 enabling it exposes Steam's Remote Play services to other machines, independently of SSH.
 `--no-lan-remote-play` disables it for one boot; Network off disables it too.
 
@@ -348,6 +350,7 @@ This is not a GPT/home shrink (that remains grow-only).
 For tests: `STEAMAC_DEFAULTS_DOMAIN=<domain>` substitutes the settings domain; `--selftest-settings
 --selftest-out DIR` opens the window without a VM and writes a PNG of each tab; `--control-fifo` has
 `settings TAB`, `settings-dump PNG`, `set KEY VALUE` (as from the window), `restart`.
+`--control-fifo` is a development hook: the release app (`SteamacReleaseDefaults`) ignores it.
 
 ### Per-game profiles
 
@@ -778,7 +781,8 @@ failure instead of staying at 3%. A disk the launcher may not open or lock (perm
 access) is explained with Finder → Get Info → Sharing & Permissions and Privacy & Security, and logged,
 not sent as a crash report (STEAMAC-15). In this
 mode, the guest console and launcher log are written to
-`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`; SIGUSR1 frame dumps go there too. `./run.sh`
+`~/Library/Logs/es.fxgam.steamac/steamac-vm.log` (past 64 MiB, also during a session, it moves
+to `steamac-vm.old.log`); SIGUSR1 frame dumps go there too. `./run.sh`
 and `work/out/steamac-vm` work as before (window settings also apply to them unless overridden by
 flags).
 

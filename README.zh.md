@@ -190,7 +190,8 @@ SSH 一键开关：**设置 → 高级 → 启用 SSH**（或 `--ssh-port N` /
 
 普通联网走 gvproxy 用户态 NAT（SteamOS 中 `192.168.127.2`）；局域网广播过不了该 NAT。**设置 → 高级 → 局域网 Remote Play**（下次启动生效）或
 `--lan-remote-play` 启用启动器侧发现中继与同端口转发：
-Mac 到客户机的 UDP **27031–27036**、TCP **27036–27037**。默认**关闭**：
+Mac 到客户机的 UDP **27031–27036**、TCP **27036–27037**。转发只监听 Mac 的局域网（支持广播的 IPv4）地址，
+不含回环与 VPN 隧道，并在虚拟机运行期间随地址变化更新。默认**关闭**：
 开启会把 Steam 的 Remote Play 服务暴露给其他机器，与 SSH 无关。
 `--no-lan-remote-play` 单次启动关闭；网络关闭则一并关闭。
 
@@ -290,6 +291,7 @@ exFAT 立即分配全部新增容量，故先检查其空闲空间。终端（St
 测试用：`STEAMAC_DEFAULTS_DOMAIN=<domain>` 替换设置域；`--selftest-settings
 --selftest-out DIR` 无虚拟机打开窗口并为每选项卡写 PNG；`--control-fifo` 支持
 `settings TAB`、`settings-dump PNG`、`set KEY VALUE`（与窗口等效）、`restart`。
+`--control-fifo` 是开发用钩子：正式版应用（`SteamacReleaseDefaults`）会忽略它。
 
 ### 单独配置游戏
 
@@ -553,7 +555,8 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`；否则用仓库的
 `work/out/steamos.img`（包旁边或构建处）。无磁盘时，首次启动窗口提供**新建磁盘…**（见下节）或**使用已有磁盘…**
 （映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。磁盘必须是带本布局分区的 SteamOS 原始 GPT 磁盘：选择 Steam Deck 恢复压缩包或 macOS 版 Steam 安装器时会被拒绝，已保存但不合格的磁盘在启动前即被拒绝（STEAMAC-7Y/7Z）。若客户机 initramfs 仍然失败（`steamac-init: FATAL …`），窗口显示错误而不是停在 3%。启动器无法打开或锁定的磁盘（权限、可移除卷访问）会提示检查 Finder → 显示简介 → 共享与权限以及隐私与安全性，并只记日志，不作为崩溃报告发送（STEAMAC-15）。此模式客户机控制台与启动器日志写入
-`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`；SIGUSR1 帧转储亦然。`./run.sh`
+`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`（超过 64 MiB 时，包括会话期间，移至
+`steamac-vm.old.log`）；SIGUSR1 帧转储亦然。`./run.sh`
 与 `work/out/steamac-vm` 照常用（除非被标志覆盖，窗口设置对它们同样有效）。
 
 映像在外接盘上时，首次从访达启动 macOS 会问“FX Steam Launcher

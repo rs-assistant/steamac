@@ -224,6 +224,9 @@ private final class PadSlot {
     private let rumble = Rumble()
     /// Input reports sent to the guest since the passed-through device was created.
     private var hidInputs = 0
+    /// Lines the guest controls the rate of: a broken or hostile pad service must not fill the log.
+    private lazy var unknownLines = LogLimiter("\(tag): unknown lines on \(port.name)")
+    private lazy var hidErrors = LogLimiter("\(tag): HID report errors")
     /// While the VM is paused (suspended, guest asleep): called before anything is sent, with
     /// whether a button went down; true = keep it from the guest (a press may wake it).
     var intercept: ((_ buttonPressed: Bool) -> Bool)?
@@ -320,18 +323,20 @@ private final class PadSlot {
                 switch r {
                 case .success(let data): self?.port.send("hid-get-reply \(id) 0 \(HIDPassthrough.hex(data))")
                 case .failure(let e):
-                    log("\(tag): \(type.rawValue) report \(rnum) for SteamOS: \(HIDPassthrough.describe(e.code))")
-                    self?.port.send("hid-get-reply \(id) \(EIO)")
+                    self?.hidErrors.write("\(tag): \(type.rawValue) report \(rnum) for SteamOS: \(HIDPassthrough.describe(e.code))")
+                    // EBUSY: more requests in flight than HIDPassthrough admits; else EIO.
+                    self?.port.send("hid-get-reply \(id) \(HIDPassthrough.replyCode(e.code))")
                 }
             }
         } else if w.count == 4, w[0] == "hid-set", let id = UInt32(w[1]),
                   let type = HIDPassthrough.ReportType(rawValue: String(w[2])), let data = HIDPassthrough.unhex(w[3]) {
             guard let d = guestHID, let hid else { port.send("hid-set-reply \(id) \(ENODEV)"); return }
+            // Too large for the device: EINVAL; too many in flight: EBUSY (HIDPassthrough).
             hid.setReport(d, type: type, data: data) { [weak self] r in
-                self?.port.send("hid-set-reply \(id) \(r == kIOReturnSuccess ? 0 : EIO)")
+                self?.port.send("hid-set-reply \(id) \(HIDPassthrough.replyCode(r))")
             }
         } else {
-            log("\(tag): unknown line \"\(line)\" on \(port.name)")
+            unknownLines.write("\(tag): unknown line \"\(guestSnippet(line))\" on \(port.name)")
         }
     }
 

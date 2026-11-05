@@ -61,6 +61,7 @@ final class HIDPassthrough {
         let maxFeature: Int
         /// Report IDs apply device-wide, including requests for undeclared report types.
         let numbered: Bool
+        let maxOutput: Int
         /// Where IOKit copies the device's input reports, for as long as the device lives.
         /// IOHIDLib's device plugin keeps the buffer of the last input report callback
         /// registered and copies every report into it while the device is open, also after the
@@ -92,12 +93,14 @@ final class HIDPassthrough {
             return ProcessInfo.processInfo.systemUptime - t < HIDPassthrough.puckSlotTimeout
         }
 
-        init(ref: IOHIDDevice, registryID: UInt64, identity: Identity, maxInput: Int, maxFeature: Int, puckSlot: Int? = nil, generic: Bool = false) {
+        init(ref: IOHIDDevice, registryID: UInt64, identity: Identity, maxInput: Int, maxFeature: Int, maxOutput: Int,
+             puckSlot: Int? = nil, generic: Bool = false) {
             self.ref = ref
             self.registryID = registryID
             self.identity = identity
             self.maxInput = maxInput
             self.maxFeature = maxFeature
+            self.maxOutput = maxOutput
             self.puckSlot = puckSlot
             self.generic = generic
             let elements = IOHIDDeviceCopyMatchingElements(ref, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] ?? []
@@ -111,6 +114,18 @@ final class HIDPassthrough {
             IOHIDDeviceUnscheduleFromRunLoop(ref, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
             IOHIDDeviceClose(ref, IOOptionBits(kIOHIDOptionsTypeNone))
             inputBuffer.deallocate()
+        }
+
+        /// The largest report of `type` the guest may hand the device (ID byte included): the
+        /// device's own maximum (at least 64 bytes, also when it has no such property) plus one,
+        /// since macOS counts some devices' numbered reports without their ID (a Bluetooth LE
+        /// Steam Controller's 64-byte feature report 1 is 65 bytes with it: getReport).
+        func reportLimit(_ type: ReportType) -> Int {
+            switch type {
+            case .feature: return maxFeature + 1
+            case .output: return maxOutput + 1
+            case .input: return maxInput + 1
+            }
         }
     }
 
@@ -191,6 +206,18 @@ final class HIDPassthrough {
     }
     var onPermissionNeededChange: ((Bool) -> Void)?
     private let io = DispatchQueue(label: "es.fxgam.steamac.hid-passthrough")
+    /// Get/SetReport calls the guest has waiting on `io`, per device (registry ID), main thread
+    /// only. Each blocks `io` for as long as the device takes, so a guest asking faster than the
+    /// controller answers would queue requests (and their reports) without bound: beyond the
+    /// caps a request is refused at once (kIOReturnBusy, EBUSY to the guest).
+    private struct InFlight { var replies = 0, outputs = 0 }
+    private var inFlight: [UInt64: InFlight] = [:]
+    /// hid-get / hid-set, which the guest's driver waits for.
+    static let maxRequestsInFlight = 8
+    /// hid-output (rumble, lights, triggers): nobody waits, and Steam sends them in bursts.
+    static let maxOutputsInFlight = 32
+    /// Report errors the guest can cause at any rate (bad sizes, refused or failing requests).
+    private let failures = LogLimiter("hid passthrough: report errors")
     private var failedOpenCount = 0
     private var loggedOpenFailures = false
 
@@ -652,7 +679,8 @@ final class HIDPassthrough {
                                 descriptor: [UInt8](descriptor), name: puckSlot != nil ? "Valve Steam Controller" : name)
         return Device(ref: ref, registryID: registryID, identity: identity,
                       maxInput: max(64, int(kIOHIDMaxInputReportSizeKey) ?? 0),
-                      maxFeature: max(64, int(kIOHIDMaxFeatureReportSizeKey) ?? 0), puckSlot: puckSlot, generic: generic)
+                      maxFeature: max(64, int(kIOHIDMaxFeatureReportSizeKey) ?? 0),
+                      maxOutput: max(64, int(kIOHIDMaxOutputReportSizeKey) ?? 0), puckSlot: puckSlot, generic: generic)
     }
 
     /// Input reports of `d` go to `handler` from now on (its input callback is registered once in
@@ -682,8 +710,34 @@ final class HIDPassthrough {
         }
     }
 
-    /// GET_REPORT of report `id`: the report (ID first) or an error, on the main queue.
+    /// Room for one more request to `d` (main thread); false = refuse it.
+    private func admit(_ d: Device, reply: Bool) -> Bool {
+        var n = inFlight[d.registryID] ?? InFlight()
+        if reply {
+            guard n.replies < HIDPassthrough.maxRequestsInFlight else { return false }
+            n.replies += 1
+        } else {
+            guard n.outputs < HIDPassthrough.maxOutputsInFlight else { return false }
+            n.outputs += 1
+        }
+        inFlight[d.registryID] = n
+        return true
+    }
+
+    private func finished(_ id: UInt64, reply: Bool) {
+        guard var n = inFlight[id] else { return }
+        if reply { n.replies -= 1 } else { n.outputs -= 1 }
+        if n.replies <= 0 && n.outputs <= 0 {
+            inFlight[id] = nil
+        } else {
+            inFlight[id] = n
+        }
+    }
+
+    /// GET_REPORT of report `id`: the report (ID first) or an error, on the main queue. Call on
+    /// the main thread.
     func getReport(_ d: Device, type: ReportType, id: UInt8, done: @escaping (Result<[UInt8], IOReturnError>) -> Void) {
+        guard admit(d, reply: true) else { done(.failure(IOReturnError(code: kIOReturnBusy))); return }
         // The IOHIDDevice, not the Device: a Device is released on the main thread only (deinit).
         // macOS needs headroom for a BLE Steam Controller's feature reports (64 bytes become
         // 65). Do not enlarge other devices' requests: this length reaches the USB transfer,
@@ -692,7 +746,8 @@ final class HIDPassthrough {
             && HIDPassthrough.isSteamController(d) ? 64 : 0
         let ref = d.ref, size = (type == .input ? d.maxInput : d.maxFeature) + headroom
         let name = d.identity.name, bus = d.identity.bus, registryID = d.registryID
-        io.async {
+        let device = d.registryID
+        io.async { [weak self] in
             var buf = [UInt8](repeating: 0, count: size)
             buf[0] = id
             var len = CFIndex(size)
@@ -705,22 +760,55 @@ final class HIDPassthrough {
             }
             let result: Result<[UInt8], IOReturnError> =
                 r == kIOReturnSuccess ? .success(Array(buf.prefix(len))) : .failure(IOReturnError(code: r))
-            DispatchQueue.main.async { done(result) }
+            DispatchQueue.main.async {
+                self?.finished(device, reply: true)
+                done(result)
+            }
         }
     }
 
-    /// SET_REPORT / output: numbered reports include their ID, unnumbered reports are payload only.
+    /// SET_REPORT / output: numbered reports include their ID, unnumbered reports are payload
+    /// only. Done on the main queue; call on the main thread. A report larger than the device
+    /// takes is refused (kIOReturnBadArgument) before it reaches the device.
     func setReport(_ d: Device, type: ReportType, data: [UInt8], done: ((IOReturn) -> Void)? = nil) {
         guard !data.isEmpty else { done?(kIOReturnBadArgument); return }
-        let ref = d.ref
         let numbered = d.numbered
         let reportID = GenericHIDRouting.reportID(numbered: numbered, firstByte: data[0])
-        io.async {
+        let limit = d.reportLimit(type)
+        guard data.count <= limit else {
+            failures.write("hid passthrough: \(type.rawValue) report \(reportID) refused: \(data.count) bytes, "
+                + "\(d.identity.name) takes up to \(limit)")
+            done?(kIOReturnBadArgument)
+            return
+        }
+        let reply = done != nil
+        guard admit(d, reply: reply) else {
+            failures.write("hid passthrough: \(type.rawValue) report \(reportID) refused: too many requests in flight to \(d.identity.name)")
+            done?(kIOReturnBusy)
+            return
+        }
+        let ref = d.ref, device = d.registryID
+        io.async { [weak self] in
             let r = data.withUnsafeBufferPointer {
                 IOHIDDeviceSetReport(ref, type.io, CFIndex(reportID), $0.baseAddress!, data.count)
             }
-            if r != kIOReturnSuccess { log("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))") }
-            if let done { DispatchQueue.main.async { done(r) } }
+            if r != kIOReturnSuccess {
+                self?.failures.write("hid passthrough: \(type.rawValue) report \(reportID): \(HIDPassthrough.describe(r))")
+            }
+            DispatchQueue.main.async {
+                self?.finished(device, reply: reply)
+                done?(r)
+            }
+        }
+    }
+
+    /// The errno a guest hid-get/hid-set reply carries for `r`.
+    static func replyCode(_ r: IOReturn) -> Int32 {
+        switch r {
+        case kIOReturnSuccess: return 0
+        case kIOReturnBusy: return EBUSY
+        case kIOReturnBadArgument: return EINVAL
+        default: return EIO
         }
     }
 

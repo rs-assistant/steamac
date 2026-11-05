@@ -1643,6 +1643,7 @@ final class StderrTap {
     private func run() {
         var buf = [UInt8](repeating: 0, count: 65536)
         var partial = [UInt8]()
+        var unchecked = 0, checkedAt = ProcessInfo.processInfo.systemUptime
         while true {
             let n = buf.withUnsafeMutableBytes { read(readFD, $0.baseAddress, $0.count) }
             if n < 0 && errno == EINTR { continue }
@@ -1656,6 +1657,14 @@ final class StderrTap {
                     if w <= 0 { break }
                     off += w
                 }
+            }
+            // Both processes' log lines pass here: keep steamac-vm.log bounded (SessionLog).
+            unchecked += n
+            let now = ProcessInfo.processInfo.systemUptime
+            if unchecked >= SessionLog.checkBytes || now - checkedAt >= SessionLog.checkInterval {
+                SessionLog.check([original, STDOUT_FILENO])
+                unchecked = 0
+                checkedAt = now
             }
             partial.append(contentsOf: buf[0..<n])
             while let nl = partial.firstIndex(of: 10) {

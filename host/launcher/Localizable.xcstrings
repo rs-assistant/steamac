@@ -7679,18 +7679,18 @@
         }
       }
     },
-    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Steam IDs, account names and email addresses are removed where recognisable." : {
+    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Консоль SteamOS, системный журнал текущей загрузки, дампы памяти, dmesg, журналы клиента Steam и Proton. Идентификаторы Steam, имена учётных записей и адреса электронной почты удаляются, если их удаётся распознать."
+            "value" : "Консоль SteamOS, системный журнал текущей загрузки, дампы памяти, dmesg, журналы клиента Steam и Proton. Перед отправкой SteamOS заменяет идентификаторы Steam, известные ей имена учётных записей и профилей Steam, адреса электронной почты и IP-адреса, если их удаётся распознать; журнал консоли очищается на этом Mac."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志。可识别的 Steam ID、账户名称和电子邮件地址会被移除。"
+            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志。发送前，SteamOS 会替换可识别的 Steam ID、其已知的 Steam 账户名与个人资料名称、电子邮件地址和 IP 地址；控制台日志在这台 Mac 上清理。"
           }
         }
       }
