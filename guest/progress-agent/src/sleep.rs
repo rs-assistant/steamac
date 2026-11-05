@@ -23,6 +23,12 @@
 //! port (launcher without guest sleep support, headless) it exits 1 before any
 //! hook ran: the sleep fails instead of suspending a VM nothing can wake.
 //!
+//! The unit waits with TimeoutStartSec=infinity, so the wait for the answer is
+//! bounded here: it ends when the host closes the port (POLLHUP, EOF) or after
+//! WAKE_TIMEOUT of guest time (which stands still while the VM is paused, so
+//! only a launcher that never paused nor answered runs into it). Either way
+//! the post hooks run and the sleep job ends as if woken.
+//!
 //! Environment override (testing): FX_SLEEP_PORT=<path> instead of the port.
 
 use std::ffi::CString;
@@ -41,6 +47,8 @@ const HOOK_DIRS: [&str; 4] = [
 ];
 /// All hooks of one phase together (systemd's DEFAULT_TIMEOUT_USEC).
 const HOOK_TIMEOUT: Duration = Duration::from_secs(90);
+/// Longest wait for the launcher's `wake` (guest running time).
+const WAKE_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const TAG: &str = "fx-sleep";
 
 /// `wake <token> <unix_ns>` for `token` -> unix ns.
@@ -126,11 +134,44 @@ fn write_line(fd: i32, line: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Block until `wake <token> <ns>`: Some(ns); None if the host closed the port or it failed.
-fn wait_wake(fd: i32, token: &str, path: &str) -> Option<i128> {
+/// Block until `wake <token> <ns>`: Some(ns); None if the host closed the port,
+/// it failed or `timeout` passed.
+fn wait_wake(fd: i32, token: &str, path: &str, timeout: Duration) -> Option<i128> {
     let mut buf = [0u8; 512];
     let mut rx: Vec<u8> = Vec::new();
+    let deadline = Instant::now() + timeout;
     loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            eprintln!("{TAG}: {path}: no answer from the host in {} s", timeout.as_secs());
+            return None;
+        }
+        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        let ms = left.as_millis().clamp(1, i32::MAX as u128) as i32;
+        let r = unsafe { libc::poll(&mut pfd, 1, ms) };
+        if r < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            eprintln!("{TAG}: poll {path}: {e}");
+            return None;
+        }
+        if r == 0 {
+            continue; // the deadline check above ends the wait
+        }
+        // Data first: a wake line may arrive together with the hang-up.
+        if pfd.revents & libc::POLLIN == 0 {
+            if pfd.revents & libc::POLLNVAL != 0 {
+                eprintln!("{TAG}: {path}: invalid descriptor");
+                return None;
+            }
+            if pfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                eprintln!("{TAG}: {path}: host closed the port (poll {:#x})", pfd.revents);
+                return None;
+            }
+            continue;
+        }
         let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if n < 0 {
             let e = io::Error::last_os_error();
@@ -180,7 +221,7 @@ pub fn run(action: &str) -> i32 {
         unsafe { libc::close(fd) };
         return 1;
     }
-    match wait_wake(fd, &token, &path) {
+    match wait_wake(fd, &token, &path, WAKE_TIMEOUT) {
         Some(host_ns) => {
             eprintln!("{TAG}: woken by the launcher");
             crate::clock::sync(host_ns, "sleep", TAG);
@@ -207,6 +248,34 @@ mod tests {
         assert_eq!(parse_wake("wake 123 -5", "123"), None);
         assert_eq!(parse_wake("wake 123 5 extra", "123"), None);
         assert_eq!(parse_wake("time 1791144110393000000", "123"), None);
+    }
+
+    #[test]
+    fn wake_wait_ends_on_answer_hangup_or_timeout() {
+        let pipe = || {
+            let mut fds = [-1; 2];
+            assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+            fds
+        };
+        let long = Duration::from_secs(60);
+        // The answer, after a stale line for an older request.
+        let [r, w] = pipe();
+        write_line(w, "wake 1 5").unwrap();
+        write_line(w, "wake 2 1791144110393000000").unwrap();
+        assert_eq!(wait_wake(r, "2", "pipe", long), Some(1791144110393000000));
+        // The host went away (writer closed: POLLHUP) without answering.
+        unsafe { libc::close(w) };
+        let started = Instant::now();
+        assert_eq!(wait_wake(r, "2", "pipe", long), None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        unsafe { libc::close(r) };
+        // Silence until the deadline.
+        let [r, w] = pipe();
+        let started = Instant::now();
+        assert_eq!(wait_wake(r, "2", "pipe", Duration::from_millis(100)), None);
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        unsafe { libc::close(r) };
+        unsafe { libc::close(w) };
     }
 
     #[test]

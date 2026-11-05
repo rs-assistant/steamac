@@ -42,6 +42,15 @@ function choice(value, name, values) {
   if (!values.includes(value)) invalid(name);
   return value;
 }
+/** Names inside the allowed prefixes that pick loaded libraries/files or a write target; the
+ *  launcher (GameProfile.deniedNames) and the guest agent refuse them too. */
+const DENIED_ENV = new Set([
+  "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES",
+  "VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
+  "VK_INSTANCE_LAYERS", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE",
+  "VK_LOADER_DRIVERS_SELECT", "VK_LOADER_DRIVERS_DISABLE",
+  "DXVK_CONFIG_FILE", "MESA_LOADER_DRIVER_OVERRIDE", "PROTON_LOG_DIR",
+]);
 /** Match the launcher's safe assignment subset, not shell syntax. Last assignment wins, as in env. */
 function profileEnv(value) {
   if (typeof value !== "string" || value.length > 256) invalid("env");
@@ -49,7 +58,7 @@ function profileEnv(value) {
   const assignments = new Map();
   for (const word of value.split(" ")) {
     const match = /^((?:VKD3D|DXVK|PROTON|WINE|MESA|RADV|VK|DXMT|MTL|STEAMAC)_[A-Z0-9_]*)=([A-Za-z0-9_.,:;+-]*)$/.exec(word);
-    if (!match || match[0] !== word) invalid("env");
+    if (!match || match[0] !== word || DENIED_ENV.has(match[1])) invalid("env");
     assignments.set(match[1], word);
   }
   return [...assignments].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, word]) => word).join(" ");

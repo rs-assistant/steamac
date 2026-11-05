@@ -261,6 +261,9 @@ final class BootProgress {
             guard parts.count == 3, parts[1].count == 64,
                   parts[1].allSatisfy({ $0.isHexDigit }), ["applied", "pending"].contains(parts[2]) else { return }
             onProfilesOK?(parts[1], parts[2] == "pending")
+        case "profiles-error":   // profiles-error <verb>: <reason> (guest agent, printable ASCII)
+            let reason = String(line.dropFirst("profiles-error".count).prefix(200))
+            log("game profiles: SteamOS refused: " + reason.trimmingCharacters(in: .whitespaces))
         case "game-gfx":
             guard parts.count == 3, let id = Int(parts[1]), id > 0,
                   ["dxmt", "vulkan"].contains(parts[2]) else { return }

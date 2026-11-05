@@ -33,6 +33,10 @@
 //!                                 first token of the first line, printable ASCII, <= 64 chars
 //!   game-gfx <appid> dxmt|vulkan  immediately after game-proton, from that Proton's DXMT marker
 //!   profiles-ok <sha256> applied|pending  exact received JSON digest; pending needs a Steam restart
+//!                                 (a running Steam, steam.service's or Desktop Mode's, has not
+//!                                 seen this set)
+//!   profiles-error <verb>: <reason>  a `profiles` / `launch` / `restart-steam` request failed
+//!                                 (nothing applied); printable ASCII, <= 200 chars, for the log
 //!   game-exit <appid>             last Steam scope disappeared (games.rs);
 //!                                 app ids 0 and 769 are excluded from per-game statistics
 //!   cursor-ready                  port opened; host resends its cursor-track policy

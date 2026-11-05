@@ -25,9 +25,20 @@ struct GameProfile: Codable, Equatable {
     }
 
     private static let word = try! NSRegularExpression(pattern: "^(VKD3D|DXVK|PROTON|WINE|MESA|RADV|VK|DXMT|MTL|STEAMAC)_[A-Z0-9_]*=[A-Za-z0-9_.,:;+-]*$")
+    /// Names inside the allowed prefixes that pick which libraries or files get loaded (Vulkan
+    /// loader drivers/layers, DXVK's config file, Mesa's driver override) or where files are
+    /// written: never sent. The guest agent (profiles.rs ENV_DENIED) rejects the same names.
+    static let deniedNames: Set<String> = [
+        "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES",
+        "VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
+        "VK_INSTANCE_LAYERS", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE",
+        "VK_LOADER_DRIVERS_SELECT", "VK_LOADER_DRIVERS_DISABLE",
+        "DXVK_CONFIG_FILE", "MESA_LOADER_DRIVER_OVERRIDE", "PROTON_LOG_DIR",
+    ]
     static func validWord(_ text: String) -> Bool {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return word.firstMatch(in: text, range: range)?.range == range
+        guard word.firstMatch(in: text, range: range)?.range == range else { return false }
+        return !deniedNames.contains(String(text.prefix { $0 != "=" }))
     }
     static func validEnv(_ text: String) -> Bool {
         text.count <= 256 && text.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ") == text
@@ -62,6 +73,9 @@ struct GameProfile: Codable, Equatable {
             if validEnv(value) { failures.append("profiles: accepted invalid env") }
         }
         if !validEnv("VKD3D_CONFIG=dxr;dxr11 MTL_HUD_ENABLED=1") || !validEnv("") { failures.append("profiles: valid env rejected") }
+        if validEnv("VK_ICD_FILENAMES=x.json") || sanitizedEnv("VK_LAYER_PATH=a DXVK_HUD=1") != "DXVK_HUD=1" {
+            failures.append("profiles: denied env name accepted")
+        }
         let data = Data(#"{"recommended":{"driver":"moltenvk","gfx":"vulkan","env":null,"installs":2,"sessions":3,"ratings":{"well":2,"issues":0,"unplayable":0,"no_start":0},"fps_avg_median":29,"launch_rate":1}}"#.utf8)
         if (try? JSONDecoder().decode(GameRecommendation.Response.self, from: data).recommended?.profile) != GameProfile(gfx: "vulkan", driver: "moltenvk") { failures.append("profiles: recommendation decoding") }
         let progress = BootProgress()
