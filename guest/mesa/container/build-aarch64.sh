@@ -11,7 +11,7 @@ source /scripts/common.sh
 deps=(meson ninja python-mako python-yaml python-packaging
       libdrm wayland wayland-protocols libx11 libxcb libxshmfence libxrandr libxext libxfixes libxxf86vm
       libglvnd xcb-proto xorgproto vulkan-headers systemd-libs zstd expat zlib)
-linked=(glibc gcc-libs libdrm wayland libxcb libxshmfence libxext libxfixes libxxf86vm libglvnd systemd-libs zstd expat zlib)
+linked=(glibc gcc-libs libdrm wayland libx11 libxcb libxshmfence libxext libxfixes libxxf86vm libglvnd systemd-libs zstd expat zlib)
 before=$(pacman -Q)
 mapfile -t missing < <(pacman -T "${deps[@]}" || true)
 if ((${#missing[@]})); then

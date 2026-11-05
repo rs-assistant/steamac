@@ -449,7 +449,6 @@ final class BootProgress {
         onChange?(s)
     }
 
-    /// "1920x1200" -> (1920, 1200); nil unless both are positive integers.
     /// --selftest-settings: guest-supplied sizes stay within the limits.
     static func limitsSelfCheck() -> [String] {
         var failures: [String] = []
@@ -464,6 +463,7 @@ final class BootProgress {
     /// arithmetic that uses it far from Int32 overflow).
     static let maxSurfaceSide = 16384
 
+    /// "1920x1200" -> (1920, 1200); nil unless both are integers in 1...maxSurfaceSide.
     static func pixelSize(_ s: String) -> (Int, Int)? {
         let v = s.split(separator: "x", omittingEmptySubsequences: false)
         guard v.count == 2, let w = Int(v[0]), let h = Int(v[1]),

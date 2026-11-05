@@ -239,7 +239,8 @@ struct Options {
                            SSH": on for this dev launcher, off in the release .app)
       --shm-mib MiB        virtio-gpu host-visible shared memory window (default 8192)
       --gpu-flags HEX      virglrenderer flags (default VENUS|NO_VIRGL = 0xc0)
-      --gvproxy PATH       gvproxy binary (default: <exe dir>/host/bin/gvproxy, Homebrew, PATH)
+      --gvproxy PATH       gvproxy binary (default: the app's own; dev launcher: <exe dir>/host/bin/gvproxy,
+                           Homebrew, PATH)
       --frame-dump PNG     where SIGUSR1 writes the current frame (default ./steamac-frame.png)
       --mouse MODE         auto (default): pointer follows the host cursor 1:1 (also in Desktop Mode);
                            while a game has focus a click captures the mouse (relative, for mouse-look),
@@ -301,7 +302,7 @@ struct Options {
     SSH: --ssh-password DISK prints user, generated password and state (pending / applied) of DISK
     (the password Settings > Advanced shows; it exists once SSH was enabled for that disk).
 
-    Crash reports (Settings > General "Send crash reports and diagnostics", on by default):
+    Crash reports (Settings > General "Send crash reports and diagnostics", off by default):
       --no-crash-reports   no crash reports or diagnostics for this run (also STEAMAC_SENTRY=0);
                            STEAMAC_SENTRY_DEBUG=1 prints the Sentry SDK's debug log
 

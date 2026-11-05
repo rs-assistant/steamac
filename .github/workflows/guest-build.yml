@@ -36,7 +36,7 @@ jobs:
       - name: Kernel (guest/kernel/build.sh)
         run: JOBS=$(nproc) guest/kernel/build.sh
       - name: Generated config vs committed config-steamac
-        run: git diff --stat -- guest/kernel/config-steamac && git diff -- guest/kernel/config-steamac | head -200
+        run: git diff -- guest/kernel/config-steamac | head -200; git diff --exit-code --stat -- guest/kernel/config-steamac
       - name: Boot under QEMU (guest/kernel/smoke-test.sh)
         run: guest/kernel/smoke-test.sh
       - name: Upload kernel config and smoke log

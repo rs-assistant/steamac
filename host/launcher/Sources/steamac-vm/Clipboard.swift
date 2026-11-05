@@ -403,8 +403,10 @@ final class ClipboardSync {
             let agent = String(decoding: f.payload.dropFirst(4), as: UTF8.self)
             log("clipboard: guest agent connected (\(agent), protocol \(version)); sharing \(enabled ? "on" : "off")")
             guestConnected = true
-            // A restarted agent has no content: the Mac's current one goes to it.
+            // A restarted agent has no content: the Mac's current one goes to it, and a copy the
+            // previous agent made while the app was in the background is no longer current.
             lastHash = nil
+            heldSet = nil
             sendState()
             if enabled { check(force: true) }
             updateTimer()

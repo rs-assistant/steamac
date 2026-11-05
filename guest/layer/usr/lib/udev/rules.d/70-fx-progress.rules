@@ -5,7 +5,11 @@
 # ("steamos", SteamOS's session user) and root may open it: the port carries
 # host commands (launch, profiles, collect-logs) and messages the launcher
 # trusts (ready, shutdown, game-*), so other local users must not reach it.
-SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.progress", OWNER="steamos", MODE="0600"
+# Access: OWNER= covers systemd <= 257; systemd 258 resolves OWNER= only for root and
+# system users and ignores "steamos" (a regular user). TAG+="uaccess" (applied by
+# 73-seat-late.rules) adds an ACL for the active session's user on seat0 in every
+# version, and logind moves it with the active session; root keeps access either way.
+SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.progress", OWNER="steamos", MODE="0600", TAG+="uaccess"
 # steamac: the launcher's port "fx.clock" (host -> guest wall-clock time after
 # a resume from suspend) is read by the root service fx-clock-sync.service;
 # the device node keeps the default root-only mode.

@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   launcher:
-    runs-on: macos-15
+    runs-on: macos-26   # macos-15 arm64 jobs were repeatedly not acquired (capacity)
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1

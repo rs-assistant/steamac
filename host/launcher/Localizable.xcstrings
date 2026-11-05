@@ -9831,6 +9831,22 @@
           }
         }
       }
+    },
+    "The bundled libwmtr_host.dylib runs DXMT's Metal calls on the Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входящая в комплект libwmtr_host.dylib выполняет вызовы Metal от DXMT на Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "随附的 libwmtr_host.dylib 在 Mac 上执行 DXMT 的 Metal 调用。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

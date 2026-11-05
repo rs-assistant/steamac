@@ -11,7 +11,8 @@
 //! can read: this boot's journal, coredumps, dmesg, OS/layer release, Steam
 //! client logs (tails), Proton logs. Steam IDs, Steam account and persona
 //! names and email addresses are replaced where recognisable before anything
-//! is written. Packed with tar/gzip under /tmp and removed right after.
+//! is written. Packed with tar/gzip in a private 0700 directory under $XDG_RUNTIME_DIR (else
+//! /tmp) and removed right after.
 
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
