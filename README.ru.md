@@ -601,7 +601,9 @@ CA Valve для создания диска (лицензии — в `Resources/
 (документ Icon Composer) `actool` компилирует в `Assets.car` (Liquid Glass на macOS 26, готовые
 рендеры для macOS 15) и запасной `AppIcon.icns`;
 подпись ad-hoc с entitlements hypervisor + disable-library-validation. Приложение можно
-перенести в `/Applications`.
+перенести в `/Applications`. Его Info.plist хранит путь к этому дереву сборки (`SteamacBuildOut`,
+например `/Users/<вы>/…/work/out`, чтобы перенесённое приложение находило диск дерева): не передавайте
+такой бандл другим; сборки `dist.sh` убирают этот ключ.
 
 Запуск из Finder (без аргументов) берёт ядро, initramfs и слой из бандла, а диск SteamOS — из
 Настройки → Дополнительно → Образ диска. По умолчанию:

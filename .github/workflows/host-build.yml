@@ -9,9 +9,16 @@ name: macOS host build
 on:
   workflow_dispatch:
   push:
-    branches: [claude/inspiring-ramanujan-ikc8xj]
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
     paths:
       - host/**
+      - scripts/**
+      - build.sh
+      - .github/workflows/host-build.yml
+  pull_request:
+    paths:
+      - host/**
+      - scripts/**
       - build.sh
       - .github/workflows/host-build.yml
 
@@ -35,13 +42,25 @@ jobs:
         run: |
           sw_vers
           system_profiler SPDisplaysDataType | sed -n '1,20p'
-          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          xcode=$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)   # newest release Xcode 26
           sudo xcode-select -s "$xcode"
           xcodebuild -version
           # README requirements (sshpass is only for SSH into a running guest)
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
           brew install meson ninja pkg-config dtc xz lld go coreutils
           rustup --version
           df -h .
+
+      - name: Download and toolchain caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: |
+            work/cache
+            work/build/go
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: host-dl-${{ hashFiles('host/*/build.sh', 'host/*/versions.env', 'host/launcher/fetch-*.sh', 'host/launcher/build-go-tool.sh') }}
+          restore-keys: host-dl-
 
       - name: MoltenVK
         # The paravirtual GPU has no mesh shaders: the geometry-shader repros cannot pass here.

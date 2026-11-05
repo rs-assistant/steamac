@@ -69,7 +69,8 @@ hdr "initramfs ($INITRD)"
 zcat "$INITRD" | cpio -t --quiet 2>/dev/null | grep -v '^bin/.' | sort | tr '\n' ' '; echo
 echo "  applets: $(zcat "$INITRD" | cpio -t --quiet 2>/dev/null | grep -c '^bin/.')"
 T=$(mktemp -d); (cd "$T" && zcat "$INITRD" | cpio -id --quiet)
-cmp "$T/init" /src/guest/initramfs/init && echo "  /init == guest/initramfs/init"
+cmp "$T/init" /src/guest/initramfs/init || { echo "  /init differs from guest/initramfs/init" >&2; exit 1; }
+echo "  /init == guest/initramfs/init"
 file "$T/bin/busybox" | sed 's/^/  /'
 rm -rf "$T"
 
