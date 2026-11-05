@@ -74,6 +74,15 @@ final class DiskCreator {
     static func rootfsTemp(_ path: String) -> String { path + ".rootfs-tmp" }
     static func diskTemp(_ path: String) -> String { path + ".partial" }
 
+    /// `^[0-9]+(\.[0-9]+)*$`: what Valve's build IDs look like (20260922.6101926), and safe as a
+    /// path component (no "/", no "..", not empty).
+    static func isBuildID(_ id: String) -> Bool {
+        let parts = id.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.allSatisfy { part in
+            !part.isEmpty && part.utf8.allSatisfy { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }
+        }
+    }
+
     /// Overall-bar segments (start, weight) in percent.
     private static let segments: [String: (Double, Double)] = [
         "meta": (0, 1), "download": (1, 2), "verify": (3, 1), "reconstruct": (4, 70), "write": (74, 25), "payload": (99, 1),
@@ -204,7 +213,10 @@ final class DiskCreator {
             bundle = b
             log("create-disk: using the cached bundle \(bundlePath)")
         } else {
-            try download(URL(string: DiskCreator.imagesURL + c.updatePath)!, to: bundlePath)
+            guard let bundleURL = URL(string: DiskCreator.imagesURL + c.updatePath) else {
+                throw OptionError("atomupd metadata: update_path \(c.updatePath) is not a valid URL path")
+            }
+            try download(bundleURL, to: bundlePath)
             status("verify", "Verifying the signed bundle…")
             bundle = try RaucBundle(contentsOf: bundlePath)
             try bundle.verify(ca: ca)
@@ -218,7 +230,7 @@ final class DiskCreator {
         guard manifest.rootfsSize == rootBytes else { throw OptionError("manifest: rootfs size \(manifest.rootfsSize) != slot size \(rootBytes)") }
         let caibx = try fs.file(manifest.rootfsFilename)
         let caibxPath = work + "/rootfs.img.caibx"
-        try Data(caibx).write(to: URL(fileURLWithPath: caibxPath))
+        try DiskCreator.writeNewFile(Data(caibx), to: caibxPath)
         log("create-disk: manifest OK: compatible=\(manifest.compatible) version=\(manifest.version) rootfs sha256=\(manifest.rootfsSHA256) size=\(manifest.rootfsSize), index \(caibx.count) bytes")
         try checkCancel()
 
@@ -313,9 +325,12 @@ final class DiskCreator {
                                              machineID: ProvisionPayload.randomMachineID(), gpt: gpt)
         let payload = Provision.payloadPath(forDisk: path)
         let payloadTmp = payload + ".partial"
-        try Data(ProvisionPayload.image(env: try ProvisionPayload.env(values), caibx: caibx))
-            .write(to: URL(fileURLWithPath: payloadTmp))
-        guard rename(payloadTmp, payload) == 0 else { throw OptionError("rename \(payloadTmp): \(String(cString: strerror(errno)))") }
+        let payloadImage = try ProvisionPayload.image(env: try ProvisionPayload.env(values), caibx: caibx)
+        try DiskCreator.writeNewFile(Data(payloadImage), to: payloadTmp)
+        // A payload left by an earlier attempt whose disk was never published belongs to no
+        // disk (the disk path was checked free above): only ours, only a regular file.
+        try DiskCreator.removeStaleFile(payload)
+        try DiskCreationFilesystem.publish(partial: payloadTmp, destination: payload)
         try DiskCreationFilesystem.publish(partial: partial, destination: path)
         keep = true
         log("create-disk: published \(DiskCreationFilesystem.fileDiagnostic(path))")
@@ -335,6 +350,43 @@ final class DiskCreator {
         log("create-disk: payload \(payload) (\(c.buildID), attached read-only on the first boot with \(Provision.cmdlineFlag))")
         status("payload", "Done", "", 1)
         return Result(path: path, payload: payload, buildID: c.buildID, version: c.version, gpt: gpt)
+    }
+
+    /// Remove `path` if it is a regular file of this user left by an earlier attempt; nothing
+    /// there is fine. Anything else (a symlink, a directory, another user's file) is not ours to
+    /// delete or write through: refuse.
+    static func removeStaleFile(_ path: String) throws {
+        var st = stat()
+        guard lstat(path, &st) == 0 else {
+            let error = errno
+            if error == ENOENT { return }
+            throw OptionError("\(path): \(String(cString: strerror(error)))")
+        }
+        guard (st.st_mode & S_IFMT) == S_IFREG, st.st_uid == getuid() else {
+            throw OptionError("\(path) exists and is not a file of this user: remove it, then try again")
+        }
+        guard unlink(path) == 0 else { throw OptionError("remove \(path): \(String(cString: strerror(errno)))") }
+    }
+
+    /// Write `data` to a new file at `path` (after removing a stale one of ours). The cache and
+    /// the disk's folder may be shared or writable by others: O_EXCL | O_NOFOLLOW never follows
+    /// a symlink planted there nor writes into a file someone else created in the meantime.
+    static func writeNewFile(_ data: Data, to path: String) throws {
+        try removeStaleFile(path)
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw OptionError("\(path): \(String(cString: strerror(errno)))") }
+        defer { close(fd) }
+        let error: Int32 = data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int32 in
+            var offset = 0
+            while offset < bytes.count {
+                let n = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
+                if n < 0 && errno == EINTR { continue }
+                if n <= 0 { return n < 0 ? errno : EIO }
+                offset += n
+            }
+            return 0
+        }
+        guard error == 0 else { throw OptionError("write \(path): \(String(cString: strerror(error)))") }
     }
 
     static func requireRootfs(_ path: String, size: UInt64) throws {
@@ -391,6 +443,12 @@ final class DiskCreator {
                       let path = c["update_path"] as? String, let store = c["chunks_store_path"] as? String,
                       (image["arch"] as? String) == "aarch64", path.hasSuffix(".raucb"),
                       !path.contains(".."), !store.contains("..") else { continue }
+                // The metadata is not signed and the build ID names a cache folder
+                // (bundles/<buildid>): digits and dots only (20260922.6101926).
+                guard DiskCreator.isBuildID(id) else {
+                    log("create-disk: skipping a candidate with an invalid build ID \"\(id.prefix(64))\"")
+                    continue
+                }
                 found.append(Candidate(buildID: id, version: image["version"] as? String ?? "", updatePath: path, chunksStorePath: store))
             }
         }

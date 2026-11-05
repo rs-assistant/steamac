@@ -43,6 +43,76 @@ enum LogOutput {
     }
 }
 
+/// Guest-supplied text quoted in a log line, cut to `limit` characters: a guest port line can be
+/// up to 512 KiB (LineSplitter), and every logged byte also lands in steamac-vm.log and the
+/// launcher.log a Report a Problem attaches.
+func guestSnippet<S: StringProtocol>(_ text: S, limit: Int = 200) -> String {
+    let head = text.prefix(limit)
+    guard head.endIndex != text.endIndex else { return String(text) }
+    return String(head) + "… (\(text.utf8.count) bytes)"
+}
+
+/// At most `limit` lines per `interval` for one source the guest controls (unknown port lines,
+/// failing HID requests): a misbehaving or hostile guest cannot fill the log. What is held back
+/// is counted and logged as one "suppressed" line when the interval is over. Any thread.
+final class LogLimiter {
+    private let what: String
+    private let limit: Int
+    private let interval: TimeInterval
+    private let lock = NSLock()
+    private var windowStart = -TimeInterval.infinity
+    private var logged = 0
+    private var suppressed = 0
+
+    init(_ what: String, limit: Int = 10, interval: TimeInterval = 60) {
+        self.what = what
+        self.limit = limit
+        self.interval = interval
+    }
+
+    func write(_ message: @autoclosure () -> String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        var summary: String?
+        if now - windowStart >= interval {
+            summary = takeSummary()
+            windowStart = now
+            logged = 0
+        }
+        let allowed = logged < limit
+        if allowed {
+            logged += 1
+        } else {
+            suppressed += 1
+            if suppressed == 1 {
+                // The summary also comes when the guest falls silent after the burst.
+                let delay = max(0, windowStart + interval - now)
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.flush()
+                }
+            }
+        }
+        lock.unlock()
+        if let summary { log(summary) }
+        if allowed { log(message()) }
+    }
+
+    private func flush() {
+        lock.lock()
+        let summary = takeSummary()
+        lock.unlock()
+        if let summary { log(summary) }
+    }
+
+    /// Caller holds `lock`.
+    private func takeSummary() -> String? {
+        guard suppressed > 0 else { return nil }
+        let text = "\(what): \(suppressed) more suppressed (at most \(limit) per \(Int(interval)) s)"
+        suppressed = 0
+        return text
+    }
+}
+
 func fatal(_ message: String) -> Never {
     log("error: \(message)")
     exit(1)

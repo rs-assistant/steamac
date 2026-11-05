@@ -282,7 +282,8 @@ struct Options {
       --resize-selftest S  S seconds after Steam is ready, resize the window 1600x1000 -> fullscreen ->
                            windowed -> 1280x800, wait for the guest's new scanout each time and dump
                            frames to <--frame-dump>-resize-N-*.png
-      --control-fifo PATH  create a FIFO that accepts scripted window input, one command per line:
+      --control-fifo PATH  (development builds; the release app ignores it)
+                           create a FIFO that accepts scripted window input, one command per line:
                            move UX UY (0..1 in the picture) | button left|right|middle down|up |
                            click left|right|middle | wheel NOTCHES | rel DX DY |
                            key KEYCODE [ctrl+cmd+opt+shift] (macOS virtual key code) |

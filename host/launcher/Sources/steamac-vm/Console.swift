@@ -44,14 +44,25 @@ final class Console {
 
     func start() {
         let onLine = self.onLine
+        // App launched from Finder: stdout is steamac-vm.log, which the guest console must not
+        // grow without bound (SessionLog rotates it).
+        SessionLog.adopt(STDOUT_FILENO)
         let out = Thread { [masterFd, logFd] in
             var buf = [UInt8](repeating: 0, count: 65536)
             var splitter = LineSplitter()
+            var unchecked = 0, checkedAt = ProcessInfo.processInfo.systemUptime
             while true {
                 let n = Darwin.read(masterFd, &buf, buf.count)
                 if n < 0 && errno == EINTR { continue }
                 if n <= 0 { break }
                 Console.writeAll(STDOUT_FILENO, buf, n)
+                unchecked += n
+                let now = ProcessInfo.processInfo.systemUptime
+                if unchecked >= SessionLog.checkBytes || now - checkedAt >= SessionLog.checkInterval {
+                    SessionLog.check([STDOUT_FILENO])
+                    unchecked = 0
+                    checkedAt = now
+                }
                 if logFd >= 0 { Console.writeAll(logFd, buf, n) }
                 if let onLine {
                     var lines: [String] = []
