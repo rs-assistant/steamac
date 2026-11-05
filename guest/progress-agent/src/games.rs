@@ -102,14 +102,34 @@ fn version_token(text: &str) -> Option<String> {
     if clean.is_empty() { None } else { Some(clean) }
 }
 
+/// Most of a prefix file read: Proton's version and config_info are a few lines.
+const PREFIX_FILE_MAX: u64 = 4096;
+
+/// A small regular file the game can write (the prefix is the game's): never
+/// follow a final symlink, never block on a FIFO or device, read at most
+/// PREFIX_FILE_MAX bytes, and tolerate a cut UTF-8 sequence at the end.
+fn read_prefix_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(PREFIX_FILE_MAX).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn proton_info(libraries: &[PathBuf], appid: u32) -> Option<(String, &'static str)> {
     for library in libraries {
         let prefix = library.join(format!("steamapps/compatdata/{appid}"));
-        let Ok(text) = std::fs::read_to_string(prefix.join("version")) else { continue };
+        let Some(text) = read_prefix_file(&prefix.join("version")) else { continue };
         if let Some(version) = version_token(&text) {
             // Proton's config_info stores fonts_dir then lib_dir after its version.
             // Use the actual run's tool, never the global DXMT boot toggle.
-            let dxmt = std::fs::read_to_string(prefix.join("config_info")).ok()
+            let dxmt = read_prefix_file(&prefix.join("config_info"))
                 .and_then(|info| info.lines().nth(2).map(PathBuf::from))
                 .filter(|lib| lib.is_absolute())
                 .is_some_and(|lib| lib.join("wine/.steamac-dxmt").is_file());
@@ -304,6 +324,25 @@ mod tests {
         f.scope("app-steam-app570-2.scope", 1024);
         f.tick(5);
         assert_eq!(f.lines(), ["game-start 570", "game-proton 570 10.0-104", "game-gfx 570 vulkan", "game-exit 570", "game-start 570", "game-proton 570 11.0-1", "game-gfx 570 vulkan"]);
+    }
+
+    #[test]
+    fn prefix_files_are_small_regular_files_only() {
+        let dir = std::env::temp_dir().join(format!("fx-games-prefix-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("version"), "1764000000 proton-10.0-3\n").unwrap();
+        assert_eq!(read_prefix_file(&dir.join("version")).as_deref(), Some("1764000000 proton-10.0-3\n"));
+        std::fs::write(dir.join("big"), "x".repeat(1 << 20)).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("big")).unwrap().len(), PREFIX_FILE_MAX as usize);
+        std::os::unix::fs::symlink(dir.join("version"), dir.join("link")).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("link")), None);
+        // A FIFO with no writer would block a plain open forever.
+        let fifo = std::ffi::CString::new(dir.join("fifo").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        assert_eq!(read_prefix_file(&dir.join("fifo")), None);
+        std::fs::create_dir(dir.join("subdir")).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("subdir")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
