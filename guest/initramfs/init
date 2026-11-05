@@ -885,6 +885,7 @@ case $SSH in
     *) warn "ignoring steamac.ssh='$SSH' (0 or 1): SSH server off"; SSH=0 ;;
 esac
 _keep=
+set -f
 for _a in $KARGS; do
     case $_a in
         root=*|rauc.slot=*|steamos.efi=*|init=*) ;;
@@ -892,6 +893,7 @@ for _a in $KARGS; do
         *) _keep="$_keep $_a" ;;
     esac
 done
+set +f
 [ "$SSH" = 0 ] && _keep="$_keep systemd.ssh_auto=no"
 echo "${_keep# } root=PARTLABEL=rootfs-$SLOT rauc.slot=$SLOT steamos.efi=PARTUUID=$EFI_UUID init=$INIT${HAVE_DDASH:+ --$IARGS}" > /run/steamac/cmdline
 

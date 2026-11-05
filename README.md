@@ -884,8 +884,9 @@ The in-process executor and DXMT's raw-host-address protocol are not a VM securi
 That is why this path is off by default and experimental; an executor fault can also stop the VM.
 Enable it only for guest software you trust.
 
-Before starting the VM, the launcher sets `STEAMAC_WMTR=1`, `STEAMAC_WMTR_LIB` (the **Executor library**
-override, otherwise `@rpath/libwmtr_host.dylib` from the app's Frameworks or `work/out/host/lib`) and
+Before starting the VM, the launcher sets `STEAMAC_WMTR=1`, `STEAMAC_WMTR_LIB` (`--wmtr-lib PATH`; the dev
+launcher also takes the **Executor library** setting, which the app bundle ignores; otherwise
+`@rpath/libwmtr_host.dylib` from the app's Frameworks or `work/out/host/lib`) and
 `WMTR_PRESENT=overlay`; all three are cleared when off. A missing/unloadable library or missing
 `wmtr_host_abi_version` disables the path for that boot (logged and red in Settings; explicit
 `--wmtr-lib` exits with the reason); libkrun rejects another ABI version. Problem/crash reports

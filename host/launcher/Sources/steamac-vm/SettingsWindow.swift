@@ -1082,7 +1082,9 @@ private struct AdvancedTab: View {
                 if settings.wmtr {
                     VStack(alignment: .leading, spacing: 6) {
                         Label2(title: "Executor library",
-                               detail: String(localized: "The bundled libwmtr_host.dylib runs DXMT's Metal calls on the Mac. Choose another executor library only if you trust it."),
+                               detail: LauncherSettings.Wmtr.customFromSettingsAllowed
+                                   ? String(localized: "The bundled libwmtr_host.dylib runs DXMT's Metal calls on the Mac. Choose another executor library only if you trust it.")
+                                   : String(localized: "The bundled libwmtr_host.dylib runs DXMT's Metal calls on the Mac."),
                                now: false, key: .wmtrLibrary)
                         HStack {
                             Text(verbatim: wmtrStatus.0)
