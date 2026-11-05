@@ -25,6 +25,8 @@
 # requested refresh (e.g. 3840x2160 at 240 Hz); legacy modes retain their base EDID.
 # Patch 0021 adds the required DisplayID 1.3 Display Parameters block while
 # preserving the high-refresh timing bytes and legacy EDID output.
+# Patch 0022 refuses RESOURCE_MAP_BLOB of a resource that is already mapped: a second map
+# orphaned the first guest mapping, and UNREF then freed host pages the guest still mapped.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
