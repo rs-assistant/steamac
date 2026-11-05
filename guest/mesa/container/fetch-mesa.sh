@@ -28,7 +28,11 @@ at_commit() {
 }
 
 if at_commit /src/mesa "$MESA_COMMIT"; then
-    echo "mesa source already at $MESA_COMMIT"
+    # The volume persists between builds: drop untracked and ignored files a previous run
+    # left (no receipt covers them), keeping only the venus-protocol checkout handled below.
+    vp_name=$(sed -n 's/^directory *= *//p' /src/mesa/subprojects/venus-protocol.wrap)
+    git -C /src/mesa clean -ffdxq -e "/subprojects/$vp_name/"
+    echo "mesa source already at $MESA_COMMIT (cleaned)"
 else
     fetch_commit /src/mesa "$MESA_URL" "$MESA_COMMIT"
     echo "mesa: $(git -C /src/mesa log -1 --format='%H %s')"
@@ -39,7 +43,8 @@ wrap=/src/mesa/subprojects/venus-protocol.wrap
 vp_dir=/src/mesa/subprojects/$(sed -n 's/^directory *= *//p' "$wrap")
 vp_rev=$(sed -n 's/^revision *= *//p' "$wrap")
 if at_commit "$vp_dir" "$VENUS_PROTOCOL_COMMIT"; then
-    echo "venus-protocol already at $VENUS_PROTOCOL_COMMIT"
+    git -C "$vp_dir" clean -ffdxq
+    echo "venus-protocol already at $VENUS_PROTOCOL_COMMIT (cleaned)"
 else
     fetch_commit "$vp_dir" "$VENUS_PROTOCOL_URL" "$VENUS_PROTOCOL_COMMIT"
     echo "venus-protocol ($vp_rev): $(git -C "$vp_dir" log -1 --format='%H %s')"

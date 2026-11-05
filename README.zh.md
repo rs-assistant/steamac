@@ -546,7 +546,8 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 `host/launcher/AppIcon.icon`（Icon Composer 文档）由 `actool` 编译为 `Assets.car`
 （macOS 26 的 Liquid Glass，macOS 15 用预渲染），外加回退 `AppIcon.icns`；
 带 hypervisor + disable-library-validation 权利的 ad-hoc 签名。应用可移到
-`/Applications`。
+`/Applications`。其 Info.plist 记录本构建树路径（`SteamacBuildOut`，如 `/Users/<你>/…/work/out`，
+以便移动后仍能找到树中的磁盘）：不要把这个包交给他人；`dist.sh` 构建会去掉该键。
 
 从访达启动（无参数）用包内的内核、initramfs 与层，SteamOS 磁盘取自 设置 → 高级 → 磁盘映像。默认：
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`；否则用仓库的

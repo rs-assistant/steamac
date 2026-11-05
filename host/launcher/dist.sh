@@ -207,15 +207,8 @@ if [[ $notarize == 1 ]]; then
     spctl -a -t open --context context:primary-signature -vv "$WORK/$DMG_NAME"
 fi
 
-rm -rf "$DIST/$NAME.app" "$DIST/$DMG_NAME"
-mv "$APP" "$DIST/$NAME.app"
-mv "$WORK/$DMG_NAME" "$DIST/$DMG_NAME"
-echo "built $DIST/$DMG_NAME ($(du -h "$DIST/$DMG_NAME" | cut -f1), sha256 $(shasum -a 256 "$DIST/$DMG_NAME" | cut -d' ' -f1))"
-echo "GPL sources: $GPL_SOURCES ($(du -h "$GPL_SOURCES" | cut -f1), sha256 $(shasum -a 256 "$GPL_SOURCES" | cut -d' ' -f1))"
-[[ $notarize == 1 ]] || echo "NOT notarized (--no-notarize): Gatekeeper blocks this DMG once downloaded"
-echo "update feed: after attaching $DMG_NAME to the GitHub release v$version, run host/launcher/appcast.sh"
-
 # Debug files for symbolicated crash reports (CrashReporting.swift). Never a hardcoded token.
+# Uploaded before the app and DMG are moved into dist/: a failed upload leaves no finished-looking release.
 if [[ $sentry_upload == 0 ]]; then
     echo "debug files NOT uploaded to Sentry (--no-notarize / --no-sentry-upload)"
 else
@@ -226,7 +219,7 @@ else
         dwarfdump --uuid "$f" >/dev/null 2>&1 || continue
         [[ $(sentry-cli debug-files check "$f") == *"Usable: yes"* ]] || die "no usable debug information in $f"
         machos+=("$f")
-    done < <(find "$DIST/$NAME.app/Contents" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
+    done < <(find "$APP/Contents" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
     kept="$DIST/FX-Steam-Launcher-$version-dSYMs"
     rm -rf "$kept"
     cp -R "$OUT/dSYMs" "$kept"
@@ -234,3 +227,11 @@ else
     sentry-cli --url https://sentry.fxgam.es debug-files upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
         --wait "$kept" "${machos[@]}"
 fi
+
+rm -rf "$DIST/$NAME.app" "$DIST/$DMG_NAME"
+mv "$APP" "$DIST/$NAME.app"
+mv "$WORK/$DMG_NAME" "$DIST/$DMG_NAME"
+echo "built $DIST/$DMG_NAME ($(du -h "$DIST/$DMG_NAME" | cut -f1), sha256 $(shasum -a 256 "$DIST/$DMG_NAME" | cut -d' ' -f1))"
+echo "GPL sources: $GPL_SOURCES ($(du -h "$GPL_SOURCES" | cut -f1), sha256 $(shasum -a 256 "$GPL_SOURCES" | cut -d' ' -f1))"
+[[ $notarize == 1 ]] || echo "NOT notarized (--no-notarize): Gatekeeper blocks this DMG once downloaded"
+echo "update feed: after attaching $DMG_NAME to the GitHub release v$version, run host/launcher/appcast.sh"

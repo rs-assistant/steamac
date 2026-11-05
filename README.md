@@ -761,7 +761,9 @@ desync, and Valve's CA for disk creation (licenses are in `Resources/licenses`);
 `host/launcher/AppIcon.icon` (an Icon Composer document) is compiled by `actool` into `Assets.car`
 (Liquid Glass on macOS 26, ready-made renders for macOS 15), with a fallback `AppIcon.icns`;
 ad-hoc signing with hypervisor + disable-library-validation entitlements. The app can be moved to
-`/Applications`.
+`/Applications`. Its Info.plist records this build tree's path (`SteamacBuildOut`, e.g.
+`/Users/<you>/…/work/out`, so a moved app still finds the tree's disk): do not hand this bundle to
+others; `dist.sh` builds drop the key.
 
 Launching from Finder (without arguments) uses the kernel, initramfs, and layer from the bundle,
 and the SteamOS disk from Settings → Advanced → Disk image. By default:

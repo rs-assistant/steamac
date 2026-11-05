@@ -7,7 +7,12 @@ name: macOS checks
 on:
   workflow_dispatch:
   push:
-    branches: [claude/inspiring-ramanujan-ikc8xj]
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - host/launcher/**
+      - host/libkrun/**
+      - .github/workflows/macos-check.yml
+  pull_request:
     paths:
       - host/launcher/**
       - host/libkrun/**
@@ -34,7 +39,7 @@ jobs:
           sw_vers
           ls -d /Applications/Xcode*.app
           # Newest installed Xcode (the launcher targets the macOS 15 SDK or later).
-          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          xcode=$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)   # newest release Xcode 26
           sudo xcode-select -s "$xcode"
           xcodebuild -version
           swift --version

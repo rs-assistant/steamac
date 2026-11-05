@@ -8,7 +8,12 @@ name: Guest build
 on:
   workflow_dispatch:
   push:
-    branches: [claude/inspiring-ramanujan-ikc8xj]
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - guest/**
+      - scripts/**
+      - .github/workflows/guest-build.yml
+  pull_request:
     paths:
       - guest/**
       - scripts/**
@@ -33,6 +38,11 @@ jobs:
         run: |
           uname -m; nproc; free -g; df -h .
           docker version --format '{{.Server.Version}} {{.Server.Arch}}'
+      - name: Kernel tarball cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: work/cache/kernel
+          key: kernel-src-${{ hashFiles('guest/kernel/build.sh') }}
       - name: Kernel (guest/kernel/build.sh)
         run: JOBS=$(nproc) guest/kernel/build.sh
       - name: Generated config vs committed config-steamac
@@ -57,8 +67,26 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
         with:
           persist-credentials: false
-      - name: Builder image and initramfs
-        run: scripts/build-image.sh builder initramfs
+      - name: Builder image cache
+        id: builder-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ runner.temp }}/builder-image.tar
+          key: builder-${{ hashFiles('scripts/builder/**', 'scripts/config.env') }}
+      - name: Builder image (cached, or built with retries for snapshot.debian.org)
+        run: |
+          set -euo pipefail
+          img=$RUNNER_TEMP/builder-image.tar
+          if [ -f "$img" ]; then docker load -i "$img"; exit 0; fi
+          for attempt in 1 2 3; do
+            scripts/build-image.sh builder && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "builder image attempt $attempt failed; retrying in 60 s"; sleep 60
+          done
+          . scripts/config.env
+          docker save -o "$img" "$BUILDER_IMAGE"
+      - name: Initramfs
+        run: scripts/build-image.sh initramfs
       - name: busybox ash checks of /init
         run: |
           set -euo pipefail

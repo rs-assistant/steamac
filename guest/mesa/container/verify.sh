@@ -22,6 +22,7 @@ fail() { echo "FAIL $*"; fails=$((fails + 1)); }
 mkdir -p /lower /ovl /merged
 # Explicit loop device (the container's /dev may lack the node loop-control hands out).
 lo=$(losetup -f)
+lo=${lo%% *}   # "/dev/loopN (lost)" when the node is missing
 [ -b "$lo" ] || mknod "$lo" b 7 "${lo#/dev/loop}"
 losetup -r "$lo" /rootfs.img
 cleanup() {

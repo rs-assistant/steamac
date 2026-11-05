@@ -132,11 +132,21 @@ c_config() { # c_config <password>: /work/config.img = Config payload v1 for /wo
 }
 
 # report <img> <out>: normalised structural description of one disk
+# mounts and loop devices of the running c_report, released by rp_cleanup (also on EXIT)
+rp_loops=() rp_mnts=()
+rp_cleanup() {
+    local i l
+    for ((i = ${#rp_mnts[@]} - 1; i >= 0; i--)); do umount "${rp_mnts[i]}" 2>/dev/null || true; done
+    for l in "${rp_loops[@]}"; do losetup -d "$l" 2>/dev/null || true; done
+    rp_loops=() rp_mnts=()
+}
+
 c_report() {
     . /src/scripts/steps/lib.sh
     local img=$1 out=$2 num start end name
     local -A dev u2n
-    local loops=() mnts=()
+    rp_loops=() rp_mnts=()
+    trap rp_cleanup EXIT   # a set -e failure must not leave loop devices in the shared VM
     exec 3>"$out"
     echo "== partition table (sgdisk, GUIDs omitted)" >&3
     sgdisk -p "$img" | sed -n '/^Sector size/,$p' | grep -v 'Disk identifier' >&3
@@ -145,7 +155,7 @@ c_report() {
         printf '%s %s type=%s\n' "$num" "$name" "$(sgdisk -i "$num" "$img" | sed -n 's/^Partition GUID code: \([^ ]*\).*/\1/p')" >&3
         u2n[$(sgdisk -i "$num" "$img" | sed -n 's/^Partition unique GUID: //p' | tr 'A-F' 'a-f')]=$name
         dev[$name]=$(newloop -r --offset $((start * 512)) --sizelimit $(((end - start + 1) * 512)) "$img")
-        loops+=("${dev[$name]}")
+        rp_loops+=("${dev[$name]}")
     done < <(sgdisk -p "$img" | awk '/^ +[0-9]+ /{print $1, $2, $3}')
     norm_uuids() { local l k; while IFS= read -r l; do for k in "${!u2n[@]}"; do l=${l//$k/<${u2n[$k]}>}; done; echo "$l"; done; }
 
@@ -176,7 +186,7 @@ c_report() {
     local M
     M=$(mktemp -d)
     for name in esp efi-A efi-B var-A var-B; do
-        mkdir -p "$M/$name"; mount -o ro "${dev[$name]}" "$M/$name"; mnts+=("$M/$name")
+        mkdir -p "$M/$name"; mount -o ro "${dev[$name]}" "$M/$name"; rp_mnts+=("$M/$name")
     done
     for name in esp efi-A efi-B; do
         echo "== $name files" >&3
@@ -201,8 +211,8 @@ c_report() {
     done
     echo "machine-id var-A == var-B: $(cmp -s "$M/var-A/lib/overlays/etc/upper/machine-id" "$M/var-B/lib/overlays/etc/upper/machine-id" && echo yes || echo NO)" >&3
     echo "var-A rootfs.caibx == bundle index: $(cmp -s "$M/var-A/lib/steamos-atomupd/rootfs.caibx" "/work/cache/rootfs/$STEAMOS_BUILDID/rootfs.img.caibx" && echo yes || echo NO)" >&3
-    for ((i = ${#mnts[@]} - 1; i >= 0; i--)); do umount "${mnts[i]}"; done
-    for l in "${loops[@]}"; do losetup -d "$l"; done
+    rp_cleanup
+    trap - EXIT
     exec 3>&-
 }
 

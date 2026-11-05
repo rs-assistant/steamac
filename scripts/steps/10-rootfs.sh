@@ -57,10 +57,14 @@ cp bundle/rootfs.img.caibx rootfs.img.caibx
 cp bundle/UUID rootfs.uuid
 log "manifest OK: sha256=$m_sha size=$m_size uuid=$(cat rootfs.uuid)"
 
-# --- reconstruct rootfs.img (skip if a verified copy is cached)
+# --- reconstruct rootfs.img (skip if a cached copy still has the pinned sha256)
+# The marker only says a previous run verified it; work/cache is writable from the host, so the
+# bytes are hashed again before they are trusted (40-disk mounts and runs tools from them).
 if [[ -f rootfs.img.verified ]] && [[ $(cat rootfs.img.verified) == "$STEAMOS_ROOTFS_SHA256" ]] \
-   && [[ $(stat -c %s rootfs.img 2>/dev/null || echo 0) == "$STEAMOS_ROOTFS_SIZE" ]]; then
-    log "cached rootfs.img already verified"
+   && [[ $(stat -c %s rootfs.img 2>/dev/null || echo 0) == "$STEAMOS_ROOTFS_SIZE" ]] \
+   && log "re-hashing cached rootfs.img" \
+   && echo "$STEAMOS_ROOTFS_SHA256  rootfs.img" | sha256sum -c --status -; then
+    log "cached rootfs.img verified (sha256 matches the pin)"
 else
     rm -f rootfs.img.verified
     log "desync extract from $STEAMOS_IMAGES_URL/$STEAMOS_CHUNKS_STORE_PATH (10 GiB, takes a while)"
