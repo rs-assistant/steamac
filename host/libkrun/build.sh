@@ -27,6 +27,14 @@
 # preserving the high-refresh timing bytes and legacy EDID output.
 # Patch 0022 refuses RESOURCE_MAP_BLOB of a resource that is already mapped: a second map
 # orphaned the first guest mapping, and UNREF then freed host pages the guest still mapped.
+# Patch 0023 limits Rutabaga2D resources to 2D textures of 1..=16384 x 1..=16384 (checked
+# stride/size), so a guest create cannot wrap the stride or demand an unbounded allocation.
+# Patch 0024 ignores virtio-console PORT_READY/PORT_OPEN for port ids past the configured
+# ports (logged once) instead of panicking on the out-of-range index.
+# Patch 0025 converts CoreAudio capture in passes of at most 64 KiB, not one allocation the
+# size of the guest's capture buffer.
+# Patch 0026 updates the virtio-gpu scanout bits only after SET_SCANOUT validated and
+# configured the new resource, and clears (not toggles) the previous resource's bit.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
