@@ -1,0 +1,122 @@
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 12:00:00 +0000
+Subject: [PATCH] rutabaga_gfx: bound the 2D resources Rutabaga2D creates
+
+Rutabaga2D allocated width * height * 4 bytes for any guest request:
+the stride was a u32 product that could wrap, and nothing bounded the
+vec![0; size] it backs the resource with. With virglrenderer running
+without GL (patch 0003), every RESOURCE_CREATE_2D and RESOURCE_CREATE_3D
+that virglrenderer refuses falls back here with all of its fields
+chosen by the guest, so a guest could make the VMM wrap the stride or
+attempt an allocation of up to 64 GiB.
+
+Accept only what Rutabaga2D can represent: a TEXTURE_2D target with
+depth and array_size 1, width and height in 1..=16384, and compute the
+stride and size with checked arithmetic. Anything else is an error,
+which the guest sees as a failed create.
+---
+ src/rutabaga_gfx/src/rutabaga_2d.rs   | 33 ++++++++++++++++++--
+ src/rutabaga_gfx/src/rutabaga_core.rs | 45 +++++++++++++++++++++++++++
+ 2 files changed, 75 insertions(+), 3 deletions(-)
+
+diff --git a/src/rutabaga_gfx/src/rutabaga_2d.rs b/src/rutabaga_gfx/src/rutabaga_2d.rs
+index 0877ff1..6ee6786 100644
+--- a/src/rutabaga_gfx/src/rutabaga_2d.rs
++++ b/src/rutabaga_gfx/src/rutabaga_2d.rs
+@@ -162,10 +162,37 @@ impl RutabagaComponent for Rutabaga2D {
+         resource_id: u32,
+         resource_create_3d: ResourceCreate3D,
+     ) -> RutabagaResult<RutabagaResource> {
++        // The guest picks every field: RESOURCE_CREATE_2D its width and height,
++        // and, when virglrenderer runs without GL and every create falls back
++        // here, RESOURCE_CREATE_3D all of them. Rutabaga2D only holds one plain
++        // 2D image, so refuse anything else, and bound the size so the stride
++        // (u32, also used by the transfers) cannot overflow and the host
++        // allocation stays below 16384 * 16384 * 4 bytes (1 GiB).
++        const MAX_2D_DIMENSION: u32 = 16384;
++        if resource_create_3d.target != RUTABAGA_PIPE_TEXTURE_2D
++            || resource_create_3d.depth != 1
++            || resource_create_3d.array_size != 1
++        {
++            return Err(RutabagaError::SpecViolation(
++                "Rutabaga2D only creates 2D textures with depth and array_size 1",
++            ));
++        }
++        if !(1..=MAX_2D_DIMENSION).contains(&resource_create_3d.width)
++            || !(1..=MAX_2D_DIMENSION).contains(&resource_create_3d.height)
++        {
++            return Err(RutabagaError::SpecViolation(
++                "Rutabaga2D resource width or height out of range",
++            ));
++        }
++
+         // All virtio formats are 4 bytes per pixel.
+-        let resource_bpp = 4;
+-        let resource_stride = resource_bpp * resource_create_3d.width;
+-        let resource_size = (resource_stride as usize) * (resource_create_3d.height as usize);
++        let resource_bpp: u32 = 4;
++        let resource_stride = resource_bpp
++            .checked_mul(resource_create_3d.width)
++            .ok_or(RutabagaError::SpecViolation("Rutabaga2D stride overflows"))?;
++        let resource_size = (resource_stride as usize)
++            .checked_mul(resource_create_3d.height as usize)
++            .ok_or(RutabagaError::SpecViolation("Rutabaga2D size overflows"))?;
+         let info_2d = Rutabaga2DInfo {
+             width: resource_create_3d.width,
+             height: resource_create_3d.height,
+diff --git a/src/rutabaga_gfx/src/rutabaga_core.rs b/src/rutabaga_gfx/src/rutabaga_core.rs
+index 8cd744b..6284f96 100644
+--- a/src/rutabaga_gfx/src/rutabaga_core.rs
++++ b/src/rutabaga_gfx/src/rutabaga_core.rs
+@@ -1369,6 +1369,51 @@ mod tests {
+         rutabaga1.restore(&mut &buffer.get_ref()[..]).unwrap();
+     }
+ 
++    #[test]
++    fn rutabaga_2d_refuses_bad_resource_parameters() {
++        let valid = ResourceCreate3D {
++            target: RUTABAGA_PIPE_TEXTURE_2D,
++            format: 1,
++            bind: RUTABAGA_PIPE_BIND_RENDER_TARGET,
++            width: 16384,
++            height: 1,
++            depth: 1,
++            array_size: 1,
++            last_level: 0,
++            nr_samples: 0,
++            flags: 0,
++        };
++        let mut rutabaga = new_2d();
++        rutabaga.resource_create_3d(1, valid).unwrap();
++        for (bad, id) in [
++            ResourceCreate3D { width: 0, ..valid },
++            ResourceCreate3D { height: 0, ..valid },
++            ResourceCreate3D {
++                width: 16385,
++                ..valid
++            },
++            ResourceCreate3D {
++                height: u32::MAX,
++                ..valid
++            },
++            ResourceCreate3D {
++                width: 0x4000_0001,
++                ..valid
++            },
++            ResourceCreate3D { depth: 2, ..valid },
++            ResourceCreate3D {
++                array_size: 0,
++                ..valid
++            },
++            ResourceCreate3D { target: 3, ..valid },
++        ]
++        .into_iter()
++        .zip(2..)
++        {
++            assert!(rutabaga.resource_create_3d(id, bad).is_err());
++        }
++    }
++
+     #[test]
+     fn snapshot_restore_2d_one_resource() {
+         let resource_id = 123;

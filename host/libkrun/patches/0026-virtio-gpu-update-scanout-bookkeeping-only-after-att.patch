@@ -1,0 +1,211 @@
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 12:00:00 +0000
+Subject: [PATCH] virtio-gpu: update scanout bookkeeping only after
+ attach_scanout succeeds
+
+attach_scanout cleared the previous resource's bit for the scanout
+before checking the new resource and configuring the display backend,
+and returned early when either failed. The scanout then still pointed
+at the previous resource while that resource's bit was gone, and as
+AssociatedScanouts::disable toggled the bit (XOR), the next attach set
+it again instead of clearing it: the bits drifted from the scanouts
+that use them, and UNREF of a resource that no scanout shows could be
+refused, or one still shown could be released.
+
+Check the resource and configure the backend first, then detach the
+previous resource and attach the new one. disable() now clears the bit
+(&= !bit). Disabling a scanout is unchanged.
+---
+ src/devices/src/virtio/gpu/virtio_gpu.rs | 146 +++++++++++++++++++++--
+ 1 file changed, 133 insertions(+), 13 deletions(-)
+
+diff --git a/src/devices/src/virtio/gpu/virtio_gpu.rs b/src/devices/src/virtio/gpu/virtio_gpu.rs
+index de5eebd..8b3e287 100644
+--- a/src/devices/src/virtio/gpu/virtio_gpu.rs
++++ b/src/devices/src/virtio/gpu/virtio_gpu.rs
+@@ -96,8 +96,10 @@ impl AssociatedScanouts {
+         self.0 |= 1 << scanout_id;
+     }
+ 
++    // Clears the bit (a toggle would set it again for a scanout that is not
++    // enabled).
+     fn disable(&mut self, scanout_id: u32) {
+-        self.0 ^= 1 << scanout_id;
++        self.0 &= !(1 << scanout_id);
+     }
+ 
+     const fn has_any_enabled(self) -> bool {
+@@ -670,28 +672,31 @@ impl VirtioGpu {
+             .scanouts
+             .get_mut(scanout_id as usize)
+             .ok_or(ErrInvalidScanoutId)?;
+-
+-        // If a resource is already associated with this scanout, make sure to disable
+-        // this scanout for that resource
+         let previous = *scanout;
+-        if let Some(previous) = previous {
+-            if let Some(resource) = self.resources.get_mut(&previous.resource_id) {
+-                resource.scanouts.disable(scanout_id);
++
++        // The previous resource's scanout bit is only cleared once the new
++        // state is committed: an error below returns with the scanout and the
++        // bits of both resources unchanged, still consistent with each other.
++        let detach_previous = |resources: &mut BTreeMap<u32, VirtioGpuResource>| {
++            if let Some(previous) = previous {
++                if let Some(resource) = resources.get_mut(&previous.resource_id) {
++                    resource.scanouts.disable(scanout_id);
++                }
+             }
+-        }
++        };
+ 
+         // Virtio spec: "The driver can use resource_id = 0 to disable a scanout."
+         let Some(format) = format.filter(|_| resource_id != 0) else {
+             debug!("Disabling scanout {scanout_id:?}");
++            detach_previous(&mut self.resources);
+             *scanout = None;
+             self.display_backend.disable_scanout(scanout_id)?;
+             return Ok(OkNoData);
+         };
+ 
+-        let resource = self
+-            .resources
+-            .get_mut(&resource_id)
+-            .ok_or(ErrInvalidResourceId)?;
++        if !self.resources.contains_key(&resource_id) {
++            return Err(ErrInvalidResourceId);
++        }
+ 
+         let unchanged =
+             previous.is_some_and(|p| p.width == width && p.height == height && p.format == format);
+@@ -710,7 +715,12 @@ impl VirtioGpu {
+             )?;
+         }
+ 
+-        resource.scanouts.enable(scanout_id);
++        // Validated and configured: commit. Detach first, as the previous
++        // resource may be this one (a page flip to the same buffer).
++        detach_previous(&mut self.resources);
++        if let Some(resource) = self.resources.get_mut(&resource_id) {
++            resource.scanouts.enable(scanout_id);
++        }
+         *scanout = Some(VirtioGpuScanout {
+             resource_id,
+             width,
+@@ -1487,6 +1497,116 @@ mod test {
+         assert!(checked_blob_map_addr(u64::MAX - 5, 10, 0, u64::MAX).is_none());
+     }
+ 
++    // A display backend whose configure_scanout fails for a width of 13.
++    struct FailingDisplay;
++
++    impl krun_display::DisplayBackendNew<()> for FailingDisplay {
++        fn new(_: Option<&()>) -> Self {
++            FailingDisplay
++        }
++    }
++
++    impl krun_display::DisplayBackendBasicFramebuffer for FailingDisplay {
++        fn configure_scanout(
++            &mut self,
++            _scanout_id: u32,
++            _display_width: u32,
++            _display_height: u32,
++            width: u32,
++            _height: u32,
++            _format: krun_display::ResourceFormat,
++        ) -> Result<(), krun_display::DisplayBackendError> {
++            match width {
++                13 => Err(krun_display::DisplayBackendError::InvalidParam),
++                _ => Ok(()),
++            }
++        }
++
++        fn disable_scanout(&mut self, _: u32) -> Result<(), krun_display::DisplayBackendError> {
++            Ok(())
++        }
++
++        fn alloc_frame(
++            &mut self,
++            _: u32,
++        ) -> Result<(u32, &mut [u8]), krun_display::DisplayBackendError> {
++            Err(krun_display::DisplayBackendError::InternalError)
++        }
++
++        fn present_frame(
++            &mut self,
++            _: u32,
++            _: u32,
++            _: Option<&krun_display::Rect>,
++        ) -> Result<(), krun_display::DisplayBackendError> {
++            Ok(())
++        }
++    }
++
++    #[test]
++    fn test_attach_scanout_keeps_bookkeeping_on_error() {
++        use super::{VirtioGpu, VirtioGpuResource};
++        use crate::virtio::display::DisplayInfo;
++        use krun_display::{IntoDisplayBackend, ResourceFormat};
++        use rutabaga_gfx::{RutabagaBuilder, RutabagaComponentType, RutabagaFenceHandler};
++
++        let mut gpu = VirtioGpu {
++            rutabaga: RutabagaBuilder::new(RutabagaComponentType::Rutabaga2D, 0, 0)
++                .build(RutabagaFenceHandler::new(|_| {}), None)
++                .unwrap(),
++            resources: Default::default(),
++            blob_backing: Default::default(),
++            fence_state: Default::default(),
++            #[cfg(target_os = "macos")]
++            map_sender: crossbeam_channel::unbounded().0,
++            scanouts: Default::default(),
++            displays: vec![DisplayInfo::new(64, 64)].into_boxed_slice(),
++            display_backend: <FailingDisplay as IntoDisplayBackend<()>>::into_display_backend(None)
++                .create_instance()
++                .unwrap(),
++        };
++        let format = Some(ResourceFormat::BGRA);
++        for id in [1, 2] {
++            gpu.resources
++                .insert(id, VirtioGpuResource::new(id, 64, 64, format, 64 * 64 * 4));
++        }
++        let enabled = |gpu: &VirtioGpu, id: u32| {
++            gpu.resources[&id]
++                .scanouts
++                .iter_enabled()
++                .collect::<Vec<u32>>()
++        };
++        let scanned_out = |gpu: &VirtioGpu| gpu.scanouts[0].map(|s| s.resource_id);
++
++        assert!(gpu.set_scanout(0, 1, 64, 64).is_ok());
++        assert_eq!(enabled(&gpu, 1), [0]);
++
++        // A failed configure, or an unknown resource, leaves resource 1 on
++        // scanout 0, with its bit.
++        assert!(gpu.set_scanout(0, 2, 13, 13).is_err());
++        assert_eq!(scanned_out(&gpu), Some(1));
++        assert_eq!(enabled(&gpu, 1), [0]);
++        assert!(enabled(&gpu, 2).is_empty());
++        assert!(gpu.attach_scanout(0, 3, 64, 64, format, None).is_err());
++        assert_eq!(scanned_out(&gpu), Some(1));
++        assert_eq!(enabled(&gpu, 1), [0]);
++
++        // Flip to resource 2, flip to it again, then disable the scanout.
++        assert!(gpu.set_scanout(0, 2, 64, 64).is_ok());
++        assert!(gpu.set_scanout(0, 2, 64, 64).is_ok());
++        assert_eq!(scanned_out(&gpu), Some(2));
++        assert!(enabled(&gpu, 1).is_empty());
++        assert_eq!(enabled(&gpu, 2), [0]);
++        assert!(gpu.set_scanout(0, 0, 0, 0).is_ok());
++        assert_eq!(scanned_out(&gpu), None);
++        assert!(enabled(&gpu, 2).is_empty());
++
++        // Disabling a bit that is not set leaves it clear.
++        let mut scanouts = super::AssociatedScanouts::default();
++        scanouts.disable(3);
++        assert!(!scanouts.has_any_enabled());
++    }
++
+     #[test]
+     fn test_virtio_gpu_associated_scanouts() {
+         use super::AssociatedScanouts;
