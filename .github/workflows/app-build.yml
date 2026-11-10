@@ -1,0 +1,341 @@
+# The whole release chain, as ./build.sh does it on a Mac, split over GitHub-hosted runners:
+#   kernel        guest/kernel/build.sh                                  (arm64 Linux)
+#   mesa-aarch64  guest/mesa/build.sh fetch aarch64                      (arm64 Linux)
+#   mesa-x86      guest/mesa/build.sh fetch x86                          (x86_64 Linux, native amd64)
+#   guest         rootfs (Valve's signed bundle), Mesa verify, initramfs, layer   (arm64 Linux)
+#   app           host stack + launcher, then bundle.sh: work/out/FX Steam Launcher.app (macOS 26)
+# Build receipts (scripts/guest-artifacts.py) travel with the artifacts as tar files (permissions
+# are part of the receipts); bundle.sh checks them against this checkout before it seals the app.
+#
+# Differences from a local build:
+# - The app job has no Docker. licenses.sh asks Docker four questions about the builder and Rust
+#   images; the guest job records the answers from the real images and a stand-in `docker` on the
+#   app job returns exactly those (anything else fails).
+# - The runner's paravirtual GPU fails KosmicKrisp's probe, so the app ships MoltenVK only.
+# - Nothing here boots SteamOS (no nested virtualization).
+# The rootfs step downloads ~4.4 GB from Valve's CDN on every run, so this runs on demand and on
+# pushes to main (and the fork's working branch) only.
+name: App bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - guest/**
+      - host/**
+      - scripts/**
+      - build.sh
+      - .github/workflows/app-build.yml
+
+permissions:
+  contents: read
+  actions: read   # gh run download (artifacts of this run)
+
+concurrency:
+  group: app-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Kernel tarball cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: work/cache/kernel
+          key: kernel-src-${{ hashFiles('guest/kernel/build.sh') }}
+      - name: Kernel (guest/kernel/build.sh)
+        run: JOBS=$(nproc) guest/kernel/build.sh
+      - name: Pack
+        run: |
+          set -euo pipefail
+          sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/kernel.tar" \
+            work/out/Image work/out/Image.inputs.json work/cache/kernel/linux-*.tar.xz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: kernel
+          path: ${{ runner.temp }}/kernel.tar
+          retention-days: 3
+
+  mesa-aarch64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: nproc; free -g; df -h /
+      - name: Mesa aarch64 (guest/mesa/build.sh fetch aarch64)
+        run: guest/mesa/build.sh fetch aarch64
+      - name: Pack
+        run: |
+          set -euo pipefail
+          sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/mesa-aarch64.tar" \
+            work/out/mesa-venus work/out/mesa-aarch64.inputs.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-aarch64
+          path: ${{ runner.temp }}/mesa-aarch64.tar
+          retention-days: 3
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-aarch64-log
+          path: work/build/mesa-venus/*.log
+          if-no-files-found: ignore
+
+  mesa-x86:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Environment (arm64 emulation for the source fetch in TOOLS_IMAGE)
+        run: |
+          set -euo pipefail
+          nproc; free -g; df -h /
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-user-static
+          docker run --rm --platform linux/arm64 "$(. guest/mesa/versions.env && echo "$TOOLS_IMAGE")" uname -m
+      - name: Mesa x86_64 + i386 (guest/mesa/build.sh fetch x86)
+        run: guest/mesa/build.sh fetch x86
+      - name: Pack
+        run: |
+          set -euo pipefail
+          sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/mesa-x86.tar" \
+            work/out/mesa-venus work/out/mesa-x86.inputs.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-x86
+          path: ${{ runner.temp }}/mesa-x86.tar
+          retention-days: 3
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-x86-log
+          path: work/build/mesa-venus/*.log
+          if-no-files-found: ignore
+
+  guest:
+    needs: [mesa-aarch64, mesa-x86]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Environment (x86_64/i386 emulation for the Mesa verify chroots)
+        run: |
+          set -euo pipefail
+          nproc; free -g; df -h /
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-user-static
+          ls /proc/sys/fs/binfmt_misc/ | grep -E 'x86_64|i386'
+      - name: Mesa trees from the build jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for a in mesa-aarch64 mesa-x86; do
+            gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "$a" -D "$RUNNER_TEMP/$a"
+            tar -C "$GITHUB_WORKSPACE" -xf "$RUNNER_TEMP/$a/$a.tar"
+            rm -rf "$RUNNER_TEMP/$a"
+          done
+      - name: Builder image cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ runner.temp }}/builder-image.tar
+          key: builder-${{ hashFiles('scripts/builder/**', 'scripts/config.env') }}
+      - name: Builder image (cached, or built with retries for snapshot.debian.org)
+        run: |
+          set -euo pipefail
+          img=$RUNNER_TEMP/builder-image.tar
+          if [ -f "$img" ]; then docker load -i "$img"; exit 0; fi
+          for attempt in 1 2 3; do
+            scripts/build-image.sh builder && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "builder image attempt $attempt failed; retrying in 60 s"; sleep 60
+          done
+          . scripts/config.env
+          docker save -o "$img" "$BUILDER_IMAGE"
+      - name: SteamOS rootfs (signed RAUC bundle, ~4.4 GB of chunks)
+        run: scripts/build-image.sh rootfs
+      - name: Mesa verify against the rootfs (guest/mesa/build.sh verify)
+        run: guest/mesa/build.sh verify
+      - name: Initramfs and layer
+        run: |
+          set -euo pipefail
+          scripts/build-image.sh initramfs layer
+          df -h /
+      - name: Answers for the app job's licenses.sh (from the real images)
+        run: |
+          set -euo pipefail
+          . scripts/config.env
+          f=work/ci-docker-answers
+          mkdir -p "$f"
+          docker run --rm --platform linux/arm64 "$RUST_IMAGE" rustc --version > "$f/rustc-version"
+          docker image inspect -f '{{.Id}}' "$BUILDER_IMAGE" > "$f/builder-id"
+          docker run --rm --platform linux/arm64 "$BUILDER_IMAGE" dpkg-query -W -f='${Version}' busybox-static > "$f/busybox-version"
+          docker run --rm --platform linux/arm64 "$BUILDER_IMAGE" cat /usr/share/doc/busybox-static/copyright > "$f/busybox-copyright"
+          head -c 200 "$f"/rustc-version "$f"/builder-id "$f"/busybox-version
+      - name: Pack
+        run: |
+          set -euo pipefail
+          sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/guest.tar" \
+            work/out/initramfs.cpio.gz work/out/steamac-layer.img work/out/mesa-venus \
+            work/out/initramfs.cpio.gz.inputs.json work/out/steamac-layer.img.inputs.json \
+            work/out/mesa-venus.inputs.json work/out/mesa-aarch64.inputs.json work/out/mesa-x86.inputs.json \
+            work/cache/cargo-home work/ci-docker-answers \
+            work/cache/dosfstools/*/*.tar.* work/cache/e2fsprogs/*/*.tar.* work/cache/btrfs-progs/*/*.tar.*
+          ls -l "$RUNNER_TEMP/guest.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: guest
+          path: ${{ runner.temp }}/guest.tar
+          retention-days: 3
+      - name: Upload Mesa verify log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-verify-log
+          path: |
+            work/build/mesa-venus/verify.log
+            work/out/mesa-venus/MANIFEST.txt
+          if-no-files-found: ignore
+
+  app:
+    needs: [kernel, guest]
+    runs-on: macos-26
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcode=$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)   # newest release Xcode 26
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install meson ninja pkg-config dtc xz lld go coreutils
+          rustup --version
+          df -h .
+
+      - name: Download and toolchain caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: |
+            work/cache
+            work/build/go
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: host-dl-${{ hashFiles('host/*/build.sh', 'host/*/versions.env', 'host/launcher/fetch-*.sh', 'host/launcher/build-go-tool.sh') }}
+          restore-keys: host-dl-
+
+      - name: MoltenVK
+        # The paravirtual GPU has no mesh shaders: the geometry-shader repros cannot pass here.
+        env:
+          STEAMAC_REPRO_FAILURE_OK: "1"
+        run: host/moltenvk/build.sh
+      - name: KosmicKrisp (optional; its probe needs a real Apple GPU)
+        continue-on-error: true
+        run: host/kosmickrisp/build.sh
+      - name: libepoxy
+        run: host/libepoxy/build.sh
+      - name: virglrenderer
+        run: host/virglrenderer/build.sh
+      - name: libkrun
+        run: host/libkrun/build.sh
+
+      - name: Guest artifacts from the Linux jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for a in kernel guest; do
+            gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "$a" -D "$RUNNER_TEMP/$a"
+            tar -C "$GITHUB_WORKSPACE" -xf "$RUNNER_TEMP/$a/$a.tar"
+            rm -rf "$RUNNER_TEMP/$a"
+          done
+          # The busybox copyright under the name licenses.sh derives from the builder image id.
+          id=$(cat work/ci-docker-answers/builder-id); id=${id#*:}
+          mkdir -p work/cache/licenses
+          cp work/ci-docker-answers/busybox-copyright "work/cache/licenses/busybox-${id:0:16}-copyright"
+          python3 scripts/guest-artifacts.py check-release
+          echo "guest receipts match this checkout"
+
+      - name: Stand-in docker for licenses.sh
+        run: |
+          set -euo pipefail
+          bin=$RUNNER_TEMP/docker-answers
+          mkdir -p "$bin"
+          cat > "$bin/docker" <<'EOF'
+          #!/bin/bash
+          # Answers the four Docker queries of host/launcher/licenses.sh with what the guest job
+          # recorded from the real images; any other invocation fails.
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/scripts/config.env"
+          a=$GITHUB_WORKSPACE/work/ci-docker-answers
+          case "$*" in
+            "run --rm --platform linux/arm64 $RUST_IMAGE rustc --version") cat "$a/rustc-version" ;;
+            "image inspect -f {{.Id}} $BUILDER_IMAGE") cat "$a/builder-id" ;;
+            "run --rm --platform linux/arm64 $BUILDER_IMAGE dpkg-query -W -f=\${Version} busybox-static") cat "$a/busybox-version" ;;
+            "run --rm --platform linux/arm64 $BUILDER_IMAGE cat /usr/share/doc/busybox-static/copyright") cat "$a/busybox-copyright" ;;
+            *) echo "docker stand-in: unexpected invocation: docker $*" >&2; exit 1 ;;
+          esac
+          EOF
+          chmod 755 "$bin/docker"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Launcher and app bundle (host/launcher/build.sh -> bundle.sh)
+        run: |
+          set -euo pipefail
+          host/launcher/build.sh
+          test -d "work/out/FX Steam Launcher.app"
+
+      - name: Check the app
+        run: |
+          set -euo pipefail
+          app="work/out/FX Steam Launcher.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements - "$app" 2>&1 | grep -E 'hypervisor|library-validation'
+          python3 scripts/guest-artifacts.py check-bundle "$app/Contents/Resources"
+          commit=$(/usr/libexec/PlistBuddy -c 'Print :SteamacGitCommit' "$app/Contents/Info.plist")
+          test "$commit" = "$(git rev-parse --short=10 HEAD)"
+          /usr/libexec/PlistBuddy -c 'Print :SteamacReleaseDefaults' "$app/Contents/Info.plist"
+          otool -L "$app/Contents/MacOS/steamac-vm" | grep -v -E '^\s*(/usr/lib/|/System/)'
+          ls -l "$app/Contents/Frameworks" "$app/Contents/Resources"
+          grep -c '^  In bundle:' "$app/Contents/Resources/licenses/THIRD-PARTY-NOTICES.txt"
+          tail -2 "$app/Contents/Resources/licenses/THIRD-PARTY-NOTICES.txt"
+          out=$RUNNER_TEMP/selftest-bundle
+          "$app/Contents/MacOS/steamac-vm" --selftest-settings --selftest-out "$out" | tail -5
+          {
+            echo "### FX Steam Launcher.app ($commit)"
+            echo '```'
+            (cd "$app/Contents" && shasum -a 256 MacOS/steamac-vm Frameworks/*.dylib Resources/Image \
+              Resources/initramfs.cpio.gz Resources/steamac-layer.img Resources/gvproxy Resources/desync)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pack the app
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent "work/out/FX Steam Launcher.app" "$RUNNER_TEMP/FX-Steam-Launcher.zip"
+          shasum -a 256 "$RUNNER_TEMP/FX-Steam-Launcher.zip" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: FX-Steam-Launcher-app
+          path: ${{ runner.temp }}/FX-Steam-Launcher.zip
+          compression-level: 0
+          retention-days: 7

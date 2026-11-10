@@ -167,6 +167,9 @@ SteamOS 磁碟不需要重建。
   音效擷取配置、scanout 記錄）。
 - **Guest**：kernel 記憶體防護選項、agent 的暫存檔與 marker、env 白名單與黑名單、凍結遊戲的復原。
 - **CI**（`.github/workflows/`）：macOS 上 build host 全套並跑 selftest；arm64 Linux 上 build kernel
-  （QEMU 開機測試）、initramfs、agent。GitHub 的 runner 無法開 VM，開機與遊戲只能在實體 Mac 上驗證。
+  （QEMU 開機測試）、initramfs、agent。`app-build.yml` 跑完整流程：Mesa（aarch64、x86）、rootfs、
+  Mesa verify、layer，最後在 macOS 上組出 `.app` 並檢查簽章與 receipt（產物保留 7 天）。CI 的 `.app`
+  不含 KosmicKrisp（runner 的 GPU 過不了它的 probe）。GitHub 的 runner 無法開 VM，開機與遊戲只能在實體
+  Mac 上驗證。
 
 逐項內容見 `git log upstream/main..HEAD`（upstream = fxgl/steamac）。
