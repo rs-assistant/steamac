@@ -16,10 +16,10 @@ produces nothing still ends it, so capture is otherwise unchanged.
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
-index 0984ecd..807edcb 100644
+index af3f2df..c626139 100644
 --- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
 +++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
-@@ -336,6 +336,9 @@ use ffi::*;
+@@ -366,6 +366,9 @@ fn microphone_permission() -> (isize, &'static str) {
  const RING_BYTES: usize = 1 << 20;
  /// Capture: largest IO slice the input callback accepts (frames).
  const CAPTURE_MAX_FRAMES: usize = 16384;
@@ -29,7 +29,7 @@ index 0984ecd..807edcb 100644
  const HOUSEKEEPING: Duration = Duration::from_secs(1);
  /// Non-zero status the converter input proc returns when the ring has no more frames now.
  const NO_MORE_INPUT: OSStatus = 0x6e6f6d6f; // 'nomo'
-@@ -2155,9 +2158,12 @@ impl HostStream {
+@@ -2224,9 +2227,12 @@ impl HostStream {
          let mut streams = streams.write().unwrap();
          let guest = &mut streams[self.id];
          let fb = fmt.frame_bytes() as usize;

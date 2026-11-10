@@ -40,6 +40,14 @@
 # byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after home, so this
 # is hardening, not a fix for observed data loss on steamac's layout. It also
 # protects future guest-wide discard and the planned Reclaim Disk Space (#78).
+# Patches 0026-0030 (this fork) bound guest-controlled virtio input:
+# 0026 refuses RESOURCE_MAP_BLOB of a resource that is already mapped (a second map orphaned the
+# first guest mapping, and UNREF then freed host pages the guest still mapped).
+# 0027 limits Rutabaga2D resources to 2D textures of 1..=16384 x 1..=16384 (checked stride/size).
+# 0028 ignores virtio-console PORT_READY/PORT_OPEN for port ids past the configured ports.
+# 0029 converts CoreAudio capture in passes of at most 64 KiB, not one guest-sized allocation.
+# 0030 updates virtio-gpu scanout bits only after SET_SCANOUT validated and configured the new
+# resource, and clears (not toggles) the previous resource's bit.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
