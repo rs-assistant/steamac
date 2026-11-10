@@ -2,7 +2,8 @@
 #   kernel        guest/kernel/build.sh                                  (arm64 Linux)
 #   mesa-aarch64  guest/mesa/build.sh fetch aarch64                      (arm64 Linux)
 #   mesa-x86      guest/mesa/build.sh fetch x86                          (x86_64 Linux, native amd64)
-#   guest         rootfs (Valve's signed bundle), Mesa verify, initramfs, layer   (arm64 Linux)
+#   mesa-verify   rootfs (Valve's signed bundle), guest/mesa/build.sh verify    (x86_64 Linux)
+#   guest         initramfs, layer                                       (arm64 Linux)
 #   app           host stack + launcher, then bundle.sh: work/out/FX Steam Launcher.app (macOS 26)
 # Build receipts (scripts/guest-artifacts.py) travel with the artifacts as tar files (permissions
 # are part of the receipts); bundle.sh checks them against this checkout before it seals the app.
@@ -131,21 +132,26 @@ jobs:
           path: work/build/mesa-venus/*.log
           if-no-files-found: ignore
 
-  guest:
+  # On x86_64 so that verify.sh runs the x86_64/i386 checks natively (on the Mac: Rosetta). Under
+  # qemu-user, fault-report-test's own SIGSEGV handling crashes QEMU itself. The arm64 containers
+  # (builder, TOOLS_IMAGE) and the aarch64 chroot run under qemu-user-static here.
+  mesa-verify:
     needs: [mesa-aarch64, mesa-x86]
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 180
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
         with:
           persist-credentials: false
-      - name: Environment (x86_64/i386 emulation for the Mesa verify chroots)
+      - name: Environment (arm64 emulation; room for the 10 GiB rootfs)
         run: |
           set -euo pipefail
           nproc; free -g; df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
           sudo apt-get update -q
           sudo apt-get install -y -q qemu-user-static
-          ls /proc/sys/fs/binfmt_misc/ | grep -E 'x86_64|i386'
+          ls /proc/sys/fs/binfmt_misc/ | grep aarch64
       - name: Mesa trees from the build jobs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -177,6 +183,61 @@ jobs:
         run: scripts/build-image.sh rootfs
       - name: Mesa verify against the rootfs (guest/mesa/build.sh verify)
         run: guest/mesa/build.sh verify
+      - name: Pack
+        run: |
+          set -euo pipefail
+          sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/mesa.tar" work/out/mesa-venus \
+            work/out/mesa-venus.inputs.json work/out/mesa-aarch64.inputs.json work/out/mesa-x86.inputs.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa
+          path: ${{ runner.temp }}/mesa.tar
+          retention-days: 3
+      - name: Upload Mesa verify log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: mesa-verify-log
+          path: |
+            work/build/mesa-venus/verify.log
+            work/out/mesa-venus/MANIFEST.txt
+          if-no-files-found: ignore
+
+  guest:
+    needs: [mesa-verify]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: nproc; free -g; df -h /
+      - name: Verified Mesa tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n mesa -D "$RUNNER_TEMP/mesa"
+          tar -C "$GITHUB_WORKSPACE" -xf "$RUNNER_TEMP/mesa/mesa.tar"
+          rm -rf "$RUNNER_TEMP/mesa"
+      - name: Builder image cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ runner.temp }}/builder-image.tar
+          key: builder-${{ hashFiles('scripts/builder/**', 'scripts/config.env') }}
+      - name: Builder image (cached, or built with retries for snapshot.debian.org)
+        run: |
+          set -euo pipefail
+          img=$RUNNER_TEMP/builder-image.tar
+          if [ -f "$img" ]; then docker load -i "$img"; exit 0; fi
+          for attempt in 1 2 3; do
+            scripts/build-image.sh builder && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "builder image attempt $attempt failed; retrying in 60 s"; sleep 60
+          done
+          . scripts/config.env
+          docker save -o "$img" "$BUILDER_IMAGE"
       - name: Initramfs and layer
         run: |
           set -euo pipefail
@@ -208,15 +269,6 @@ jobs:
           name: guest
           path: ${{ runner.temp }}/guest.tar
           retention-days: 3
-      - name: Upload Mesa verify log
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
-        with:
-          name: mesa-verify-log
-          path: |
-            work/build/mesa-venus/verify.log
-            work/out/mesa-venus/MANIFEST.txt
-          if-no-files-found: ignore
 
   app:
     needs: [kernel, guest]
