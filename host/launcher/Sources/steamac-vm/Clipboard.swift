@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 
 /// Frames of the `fx.clipboard` port, shared with the guest agent
 /// (guest/progress-agent/src/clipboard.rs has the full description):
@@ -17,6 +18,19 @@ enum ClipCodec {
     static let header = 16
     static let textMax = 1 << 20
     static let imageMax = 16 << 20
+    /// Decoded size limit for a SteamOS image (pixels): a small PNG can declare a huge canvas.
+    static let imagePixelsMax = 64 << 20
+
+    /// Width and height from the PNG header (ImageIO reads only the properties, no pixels).
+    static func pngPixels(_ png: Data) -> Int? {
+        guard let src = CGImageSourceCreateWithData(png as CFData, nil), CGImageSourceGetCount(src) >= 1,
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              w > 0, h > 0 else { return nil }
+        let (n, overflow) = w.multipliedReportingOverflow(by: h)
+        return overflow ? Int.max : n
+    }
     static let maxPayload = textMax + imageMax + 1024
     static let mimeText = "text/plain;charset=utf-8"
     static let mimePNG = "image/png"
@@ -99,35 +113,49 @@ enum ClipCodec {
         n < 1024 ? "\(n) B" : n < 1 << 20 ? String(format: "%.1f KiB", Double(n) / 1024) : String(format: "%.1f MiB", Double(n) / 1048576)
     }
 
-    /// Incremental decoder; resynchronises on the magic after garbage.
+    /// Incremental decoder; resynchronises on the magic after garbage. Scans with a read cursor
+    /// and drops consumed bytes once per feed, so garbage costs linear time.
     struct Decoder {
         private var buf: [UInt8] = []
 
         mutating func feed(_ bytes: UnsafeRawBufferPointer) -> [Frame] {
             buf.append(contentsOf: bytes)
             var out: [Frame] = []
+            var pos = 0
+            defer { buf.removeFirst(pos) }
             while true {
-                guard let start = Decoder.find(magic, in: buf) else {
-                    buf.removeFirst(max(0, buf.count - 3))   // keep a possible partial magic
+                guard let start = Decoder.find(magic, in: buf, from: pos) else {
+                    pos = max(pos, buf.count - (magic.count - 1))   // keep a possible partial magic
                     return out
                 }
-                if start > 0 { buf.removeFirst(start) }
-                guard buf.count >= header else { return out }
-                let len = Int(buf[12]) | Int(buf[13]) << 8 | Int(buf[14]) << 16 | Int(buf[15]) << 24
-                guard let kind = Kind(rawValue: buf[4]), buf[5] == 0, buf[6] == 0, buf[7] == 0, len <= maxPayload else {
-                    buf.removeFirst()   // not a frame start
+                pos = start
+                guard buf.count - pos >= header else { return out }
+                let len = Int(buf[pos + 12]) | Int(buf[pos + 13]) << 8 | Int(buf[pos + 14]) << 16 | Int(buf[pos + 15]) << 24
+                guard let kind = Kind(rawValue: buf[pos + 4]), buf[pos + 5] == 0, buf[pos + 6] == 0, buf[pos + 7] == 0,
+                      len <= maxPayload else {
+                    pos += 1   // not a frame start
                     continue
                 }
-                guard buf.count >= header + len else { return out }
-                let seq = UInt32(buf[8]) | UInt32(buf[9]) << 8 | UInt32(buf[10]) << 16 | UInt32(buf[11]) << 24
-                out.append(Frame(kind: kind, seq: seq, payload: Data(buf[header..<header + len])))
-                buf.removeFirst(header + len)
+                guard buf.count - pos >= header + len else { return out }
+                let seq = UInt32(buf[pos + 8]) | UInt32(buf[pos + 9]) << 8 | UInt32(buf[pos + 10]) << 16 | UInt32(buf[pos + 11]) << 24
+                out.append(Frame(kind: kind, seq: seq, payload: Data(buf[pos + header..<pos + header + len])))
+                pos += header + len
             }
         }
 
-        private static func find(_ needle: [UInt8], in hay: [UInt8]) -> Int? {
-            guard hay.count >= needle.count else { return nil }
-            return (0...hay.count - needle.count).first { i in hay[i] == needle[0] && Array(hay[i..<i + needle.count]) == needle }
+        private static func find(_ needle: [UInt8], in hay: [UInt8], from: Int) -> Int? {
+            guard hay.count - from >= needle.count else { return nil }
+            var i = from
+            let last = hay.count - needle.count
+            while i <= last {
+                if hay[i] == needle[0] {
+                    var j = 1
+                    while j < needle.count && hay[i + j] == needle[j] { j += 1 }
+                    if j == needle.count { return i }
+                }
+                i += 1
+            }
+            return nil
         }
     }
 }
@@ -238,9 +266,14 @@ final class ClipboardSync {
         didSet {
             guard vmPaused != oldValue else { return }
             updateTimer()
-            if !vmPaused { check() }
+            if !vmPaused { applyHeldSet(); check() }
         }
     }
+    /// The latest SteamOS → Mac SET that arrived while the app was in the background or the VM was
+    /// paused, with the pasteboard's changeCount at that moment. The guest may only replace the
+    /// Mac clipboard while the user is in FX Steam Launcher: it is applied on activation if the
+    /// Mac's pasteboard did not change in between (a newer Mac copy wins), otherwise dropped.
+    private var heldSet: (frame: ClipCodec.Frame, changeCount: Int)?
     private var lastChangeCount: Int
     /// changeCount whose concealed item was already logged as kept on the Mac.
     private var loggedConcealed = -1
@@ -280,13 +313,14 @@ final class ClipboardSync {
     func setAppActive(_ active: Bool) {
         guard active != appActive else { return }
         appActive = active
-        if active { check() }
+        if active { applyHeldSet(); check() }
         updateTimer()
     }
 
     private func setEnabled(_ on: Bool) {
         guard on != enabled else { return }
         enabled = on
+        if !on { heldSet = nil }
         log("clipboard: sharing \(on ? "on" : "off")")
         if guestConnected {
             sendState()
@@ -369,8 +403,10 @@ final class ClipboardSync {
             let agent = String(decoding: f.payload.dropFirst(4), as: UTF8.self)
             log("clipboard: guest agent connected (\(agent), protocol \(version)); sharing \(enabled ? "on" : "off")")
             guestConnected = true
-            // A restarted agent has no content: the Mac's current one goes to it.
+            // A restarted agent has no content: the Mac's current one goes to it, and a copy the
+            // previous agent made while the app was in the background is no longer current.
             lastHash = nil
+            heldSet = nil
             sendState()
             if enabled { check(force: true) }
             updateTimer()
@@ -404,10 +440,22 @@ final class ClipboardSync {
             log("clipboard: SteamOS → Mac #\(f.seq) while sharing is off: ignored")
             return ack(f.seq, .rejected)
         }
+        guard appActive, !vmPaused else {
+            if let old = heldSet { log("clipboard: SteamOS → Mac #\(old.frame.seq) superseded by #\(f.seq) before it was applied") }
+            heldSet = (f, pasteboard.changeCount)
+            log("clipboard: SteamOS → Mac #\(f.seq) while FX Steam Launcher is in the background: held until it is active")
+            return
+        }
         guard let (text, png) = ClipCodec.parseSet(f.payload), text != nil || png != nil,
               (text?.count ?? 0) <= ClipCodec.textMax, (png?.count ?? 0) <= ClipCodec.imageMax else {
             log("clipboard: SteamOS → Mac #\(f.seq): malformed or over the limits, ignored")
             return ack(f.seq, .rejected)
+        }
+        if let png {
+            guard let pixels = ClipCodec.pngPixels(png), pixels <= ClipCodec.imagePixelsMax else {
+                log("clipboard: SteamOS → Mac #\(f.seq): image is not a readable PNG or above \(ClipCodec.imagePixelsMax >> 20) MP, ignored")
+                return ack(f.seq, .rejected)
+            }
         }
         let h = ClipCodec.hash(text: text, png: png)
         guard h != lastHash else { return ack(f.seq, .same) }
@@ -426,6 +474,16 @@ final class ClipboardSync {
         lastHash = h
         log("clipboard: SteamOS → Mac #\(f.seq): \(ClipCodec.describe(text: text, png: png))")
         ack(f.seq, .applied)
+    }
+
+    private func applyHeldSet() {
+        guard let held = heldSet, enabled, appActive, !vmPaused else { return }
+        heldSet = nil
+        guard pasteboard.changeCount == held.changeCount else {
+            log("clipboard: SteamOS → Mac #\(held.frame.seq) dropped: the Mac's clipboard changed after it arrived")
+            return ack(held.frame.seq, .rejected)
+        }
+        guestSet(held.frame)
     }
 
     /// --selftest-settings: frame codec round trip / resync and the concealed-type filter.
@@ -450,6 +508,12 @@ final class ClipboardSync {
             || isConcealed([.string, .png]) {
             failures.append("clipboard: concealed/transient classification")
         }
+        // A 1x1 PNG passes; one declaring 40000x40000 (1.6 GP) is refused before any decoding.
+        let tiny = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=")!
+        let huge = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAnEAAAJxACAYAAABRDA4FAAAADElEQVR4nGNgoAwAAABAAAG3NHzvAAAAAElFTkSuQmCC")!
+        if ClipCodec.pngPixels(tiny) != 1 { failures.append("clipboard: 1x1 PNG size not read") }
+        if let n = ClipCodec.pngPixels(huge), n <= ClipCodec.imagePixelsMax { failures.append("clipboard: oversized PNG accepted") }
+        if ClipCodec.pngPixels(Data("not a png".utf8)) != nil { failures.append("clipboard: non-PNG has a size") }
         return failures
     }
 }

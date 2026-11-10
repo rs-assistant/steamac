@@ -64,6 +64,10 @@ if [[ -e $OUT && ${FORCE_DISK:-} != 1 ]]; then
 fi
 [[ $(cat "$CACHE/rootfs.img.verified" 2>/dev/null) == "$STEAMOS_ROOTFS_SHA256" ]] \
     || { log "verified rootfs missing, run the rootfs step"; exit 1; }
+# The marker is a file in host-writable work/cache: hash the image itself before mounting it and
+# running its steamos-bootconf as root below.
+echo "$STEAMOS_ROOTFS_SHA256  $ROOTFS" | sha256sum -c --status - \
+    || { log "$ROOTFS does not match the pinned sha256; rerun the rootfs step"; exit 1; }
 
 TMP=$OUT.tmp
 LOOPS=()

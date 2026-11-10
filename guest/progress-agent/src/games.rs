@@ -21,6 +21,7 @@ pub struct Games {
     meminfo: PathBuf,
     proc_root: PathBuf,
     running: BTreeMap<u32, Run>,
+    last_started: Option<u32>,
 }
 
 impl Games {
@@ -31,7 +32,15 @@ impl Games {
             meminfo: PathBuf::from("/proc/meminfo"),
             proc_root: PathBuf::from("/proc"),
             running: BTreeMap::new(),
+            last_started: None,
         }
+    }
+
+    /// Keep the last launch after its scope exits: startup failures often end before reporting.
+    pub fn diagnostic_appid(&self) -> Option<u32> {
+        self.last_started.filter(|id| self.running.contains_key(id))
+            .or_else(|| self.running.keys().next().copied())
+            .or(self.last_started)
     }
 
     /// Called only after a heartbeat timer expiration, in both main loops.
@@ -56,6 +65,7 @@ impl Games {
         let mut guest_used = None;
         for (appid, paths) in scopes {
             let run = self.running.entry(appid).or_insert_with(|| {
+                self.last_started = Some(appid);
                 port.send(&format!("game-start {appid}"));
                 names.report(appid, port);
                 Run { next_memory: now + MEMORY_INTERVAL, proton_sent: false }
@@ -92,14 +102,34 @@ fn version_token(text: &str) -> Option<String> {
     if clean.is_empty() { None } else { Some(clean) }
 }
 
+/// Most of a prefix file read: Proton's version and config_info are a few lines.
+const PREFIX_FILE_MAX: u64 = 4096;
+
+/// A small regular file the game can write (the prefix is the game's): never
+/// follow a final symlink, never block on a FIFO or device, read at most
+/// PREFIX_FILE_MAX bytes, and tolerate a cut UTF-8 sequence at the end.
+fn read_prefix_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(PREFIX_FILE_MAX).read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn proton_info(libraries: &[PathBuf], appid: u32) -> Option<(String, &'static str)> {
     for library in libraries {
         let prefix = library.join(format!("steamapps/compatdata/{appid}"));
-        let Ok(text) = std::fs::read_to_string(prefix.join("version")) else { continue };
+        let Some(text) = read_prefix_file(&prefix.join("version")) else { continue };
         if let Some(version) = version_token(&text) {
             // Proton's config_info stores fonts_dir then lib_dir after its version.
             // Use the actual run's tool, never the global DXMT boot toggle.
-            let dxmt = std::fs::read_to_string(prefix.join("config_info")).ok()
+            let dxmt = read_prefix_file(&prefix.join("config_info"))
                 .and_then(|info| info.lines().nth(2).map(PathBuf::from))
                 .filter(|lib| lib.is_absolute())
                 .is_some_and(|lib| lib.join("wine/.steamac-dxmt").is_file());
@@ -183,7 +213,7 @@ mod tests {
             let port = Port::open(output.to_str().unwrap()).unwrap();
             Fixture {
                 names: appname::Names::new(steam.clone(), root.join("named")),
-                games: Games { cgroup_root: Some(cgroup), steam_root: steam, meminfo, proc_root: root.join("proc"), running: BTreeMap::new() },
+                games: Games { cgroup_root: Some(cgroup), steam_root: steam, meminfo, proc_root: root.join("proc"), running: BTreeMap::new(), last_started: None },
                 root, port, now: Instant::now(),
             }
         }
@@ -242,6 +272,24 @@ mod tests {
     }
 
     #[test]
+    fn diagnostics_prefer_running_then_last_launched_game() {
+        let mut f = Fixture::new();
+        assert_eq!(f.games.diagnostic_appid(), None);
+        let first = f.scope("app-steam-app570-1.scope", 1024);
+        f.tick(0);
+        assert_eq!(f.games.diagnostic_appid(), Some(570));
+        let second = f.scope("app-steam-app4356430-1.scope", 1024);
+        f.tick(1);
+        assert_eq!(f.games.diagnostic_appid(), Some(4356430));
+        std::fs::remove_dir_all(second).unwrap();
+        f.tick(2);
+        assert_eq!(f.games.diagnostic_appid(), Some(570));
+        std::fs::remove_dir_all(first).unwrap();
+        f.tick(3);
+        assert_eq!(f.games.diagnostic_appid(), Some(4356430));
+    }
+
+    #[test]
     fn already_running_once_and_non_games_ignored() {
         let mut f = Fixture::new();
         f.scope("app-steam-app570-1.scope", 1024);
@@ -276,6 +324,25 @@ mod tests {
         f.scope("app-steam-app570-2.scope", 1024);
         f.tick(5);
         assert_eq!(f.lines(), ["game-start 570", "game-proton 570 10.0-104", "game-gfx 570 vulkan", "game-exit 570", "game-start 570", "game-proton 570 11.0-1", "game-gfx 570 vulkan"]);
+    }
+
+    #[test]
+    fn prefix_files_are_small_regular_files_only() {
+        let dir = std::env::temp_dir().join(format!("fx-games-prefix-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("version"), "1764000000 proton-10.0-3\n").unwrap();
+        assert_eq!(read_prefix_file(&dir.join("version")).as_deref(), Some("1764000000 proton-10.0-3\n"));
+        std::fs::write(dir.join("big"), "x".repeat(1 << 20)).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("big")).unwrap().len(), PREFIX_FILE_MAX as usize);
+        std::os::unix::fs::symlink(dir.join("version"), dir.join("link")).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("link")), None);
+        // A FIFO with no writer would block a plain open forever.
+        let fifo = std::ffi::CString::new(dir.join("fifo").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        assert_eq!(read_prefix_file(&dir.join("fifo")), None);
+        std::fs::create_dir(dir.join("subdir")).unwrap();
+        assert_eq!(read_prefix_file(&dir.join("subdir")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

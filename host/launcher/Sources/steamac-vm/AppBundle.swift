@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 import UniformTypeIdentifiers
 
 /// Running inside "FX Steam Launcher.app" (build.sh / bundle.sh): the kernel, initramfs, layer
@@ -17,6 +18,100 @@ enum AppBundle {
     /// SSH off and no default guest password on created disks. The dev launcher has neither.
     static var releaseDefaults: Bool {
         Bundle.main.object(forInfoDictionaryKey: "SteamacReleaseDefaults") as? Bool ?? false
+    }
+
+    /// A local copy may have lost a resource even when the published DMG is complete
+    /// (STEAMAC-8K). Paths are kept in the local log, not in the warning's diagnostic fields.
+    struct InstallationFailure: LocalizedError, CustomStringConvertible {
+        let diagnostics: [String: String]
+        var description: String {
+            "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again. " + Self.reopenGuidance
+        }
+        var errorDescription: String? {
+            String(localized: "The FX Steam Launcher installation is incomplete: its SteamOS download tool (desync) is missing, unreadable or not executable. Download the latest DMG again and copy FX Steam Launcher to Applications, replacing the old copy. Check security software for a blocked or removed desync file, then try again.")
+                + " " + String(localized: "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications.")
+        }
+        private static let reopenGuidance = "Quit FX Steam Launcher completely before replacing or moving it, then open the copy in Applications."
+    }
+
+    struct ResourceStatus {
+        let regular: Bool
+        let readable: Bool
+        let executable: Bool
+        let statError: Int32
+        var usable: Bool { regular && readable && executable }
+        var presence: String { statError == 0 ? "present" : (statError == ENOENT ? "missing" : "unavailable") }
+
+        init(path: String) {
+            var st = stat()
+            let result = stat(path, &st)
+            statError = result == 0 ? 0 : errno
+            regular = result == 0 && (st.st_mode & S_IFMT) == S_IFREG
+            readable = access(path, R_OK) == 0
+            executable = access(path, X_OK) == 0
+        }
+    }
+
+    /// App Translocation's containing directory is a stable macOS path marker. This avoids
+    /// linking private Security.framework translocation APIs.
+    static func isTranslocated(_ bundleURL: URL) -> Bool {
+        bundleURL.pathComponents.contains("AppTranslocation")
+    }
+
+    /// Only runs after a required bundled tool failed its availability check.
+    static func installationFailure(bundleURL: URL, desync: ResourceStatus) -> InstallationFailure {
+        let resources = bundleURL.appendingPathComponent("Contents/Resources", isDirectory: true)
+        var diagnostics = [
+            "translocated": String(isTranslocated(bundleURL)),
+            "translocation_check": "bundle path component",
+            "desync_presence": desync.presence,
+            "desync_stat_errno": String(desync.statError),
+            "desync_regular_file": String(desync.regular),
+            "desync_readable": String(desync.readable),
+            "desync_executable": String(desync.executable),
+        ]
+        // ENOENT on desync alone does not prove a partial copy or security-software removal:
+        // STEAMAC-AE could not list Resources or even create a static-code object for the app.
+        // Retain parent availability without sending the installation's absolute path.
+        for (name, url) in [("bundle", bundleURL),
+                            ("contents", bundleURL.appendingPathComponent("Contents", isDirectory: true)),
+                            ("resources", resources)] {
+            var st = stat()
+            let result = stat(url.path, &st)
+            let code = result == 0 ? 0 : errno
+            diagnostics[name + "_presence"] = code == 0 ? "present" : (code == ENOENT ? "missing" : "unavailable")
+            diagnostics[name + "_stat_errno"] = String(code)
+            diagnostics[name + "_directory"] = String(result == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        }
+        do {
+            let entries = try FileManager.default.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            diagnostics["resources_count"] = String(entries.count)
+            diagnostics["resources_listing"] = entries.map { entry in
+                var st = stat()
+                let size = lstat(entry.path, &st) == 0 ? String(st.st_size) : "unknown"
+                let relative = "Contents/Resources/" + entry.lastPathComponent
+                return "\(relative.debugDescription) size=\(size)"
+            }.joined(separator: "\n")
+        } catch {
+            let e = error as NSError
+            diagnostics["resources_listing_error"] = "\(e.domain) \(e.code)"
+        }
+        var code: SecStaticCode?
+        let created = SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &code)
+        diagnostics["code_signature_create_status"] = String(created)
+        if created == errSecSuccess, let code {
+            let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
+            let validity = SecStaticCodeCheckValidity(code, flags, nil)
+            diagnostics["code_signature_validity_status"] = String(validity)
+            diagnostics["code_signature_valid"] = String(validity == errSecSuccess)
+        } else {
+            diagnostics["code_signature_valid"] = "unknown"
+            diagnostics["code_signature_validity_status"] = "not checked (code creation failed)"
+        }
+        log("installation: bundle path \(bundleURL.path)")
+        for key in diagnostics.keys.sorted() { log("installation: \(key)=\(diagnostics[key]!)") }
+        return InstallationFailure(diagnostics: diagnostics)
     }
 
     static var appSupportDir: String {
@@ -44,13 +139,37 @@ enum AppBundle {
         defaultDiskCandidates().first(where: isDiskImage)
     }
 
-    /// A disk image libkrun can attach: a readable file, not a directory. The open panels let a
-    /// package through as a file: two 1.9 users chose an app (/System/Applications/Apps.app,
-    /// Steam.app) as their disk, and every start failed in krun_start_enter with -22 (STEAMAC-15).
+    /// Validate the raw SteamOS GPT, not its suffix: recovery archives and Steam's macOS
+    /// installer are readable files too, but cannot boot (STEAMAC-7Y/7Z).
     static func isDiskImage(_ path: String) -> Bool {
         var directory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && !directory.boolValue
-            && FileManager.default.isReadableFile(atPath: path)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
+              let table = try? GPT.read(path: path) else { return false }
+        return DiskLayout.parts(homeGiB: DiskLayout.defaultHomeGiB).allSatisfy { part in
+            var matches = 0
+            for entry in table.entries where entry.name == part.name {
+                guard entry.type == part.type else { return false }
+                matches += 1
+            }
+            return matches == 1
+        }
+    }
+
+    static var invalidDiskMessage: String {
+        String(localized: "Choose a raw SteamOS GPT disk with the SteamOS partitions (including esp, rootfs-A and home), not a recovery archive or Steam's macOS installer. Use Create SteamOS Disk to download and create the correct disk.")
+    }
+
+    /// Shared by both disk pickers: do not save a bad selection or silently ignore it.
+    @MainActor
+    static func acceptDiskSelection(_ path: String) -> Bool {
+        guard isDiskImage(path) else {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Not a usable SteamOS disk")
+            alert.informativeText = (path as NSString).abbreviatingWithTildeInPath + "\n\n" + invalidDiskMessage
+            alert.runModal()
+            return false
+        }
+        return true
     }
 
     /// "Choose a SteamOS disk image" panels (first run, Settings > Advanced): files only, no
@@ -96,7 +215,8 @@ enum AppBundle {
 
     /// Finder / `open` launch: stdout and stderr are /dev/null, so the guest console and the
     /// launcher log are appended to ~/Library/Logs/es.fxgam.steamac/steamac-vm.log instead
-    /// (rotated at 64 MiB). Running Contents/MacOS/steamac-vm from a shell keeps the terminal/pipes.
+    /// (rotated at 64 MiB, at launch and during the session: SessionLog). Running
+    /// Contents/MacOS/steamac-vm from a shell keeps the terminal/pipes.
     static var outputDiscarded: Bool {
         var null = stat(), out = stat(), err = stat()
         guard stat("/dev/null", &null) == 0, fstat(STDOUT_FILENO, &out) == 0, fstat(STDERR_FILENO, &err) == 0 else { return false }
@@ -110,14 +230,15 @@ enum AppBundle {
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)
         var st = stat()
-        if stat(path, &st) == 0, st.st_size > 64 << 20 {
-            rename(path, (path as NSString).deletingPathExtension + ".old.log")
+        if stat(path, &st) == 0, st.st_size > SessionLog.maxSize {
+            rename(path, SessionLog.oldPath)
         }
         let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
         guard fd >= 0 else { return }
         dup2(fd, STDOUT_FILENO)
         dup2(fd, STDERR_FILENO)
         close(fd)
+        SessionLog.adopt(STDOUT_FILENO)
         let stamp = ISO8601DateFormatter().string(from: Date())
         log("---- \(stamp) FX Steam Launcher started (pid \(getpid()), \(Bundle.main.bundlePath))")
     }
@@ -126,13 +247,77 @@ enum AppBundle {
     /// on screen; a shell launch has the message on stderr).
     @MainActor
     static func alertIfLaunchedFromFinder(_ title: LocalizedStringResource, _ message: String) {
-        guard resources != nil && getppid() == 1 else { return }
+        guard resources != nil && (getppid() == 1 || Supervisor.isChild) else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: title)
         alert.informativeText = message
         NSApplication.shared.setActivationPolicy(.regular)
         NSApp.activate()
         alert.runModal()
+    }
+}
+
+/// steamac-vm.log while a session runs. Rotation at launch alone let a session grow the file
+/// without bound: the guest console (and anything a guest makes the launcher log) is written
+/// there for as long as the VM runs. Two processes write it: the supervisor (its stdout and the
+/// stderr tap's copy, CrashReporting.StderrTap) and the VM process (its stdout: the hvc0
+/// console). Each checks the file now and then (`check`): past `maxSize` the first one renames
+/// it to steamac-vm.old.log and opens a new one; the other, still writing the renamed file,
+/// notices that the path has another file now and reopens it. Only fds that write the file this
+/// process adopted are touched (a shell redirect to some other file is left alone).
+enum SessionLog {
+    static let maxSize: off_t = 64 << 20
+    /// Bytes or seconds between checks (a stat and an fstat).
+    static let checkBytes = 1 << 20
+    static let checkInterval: TimeInterval = 10
+    static var oldPath: String { (AppBundle.logPath as NSString).deletingPathExtension + ".old.log" }
+
+    private static let lock = NSLock()
+    /// The log file this process writes (device, inode), nil = none.
+    nonisolated(unsafe) private static var file: (dev: dev_t, ino: ino_t)?
+
+    /// `fd` writes the app's log file (the supervisor after the Finder redirect, the VM process
+    /// whose stdout it inherited): `check` may rotate or reopen it from now on.
+    static func adopt(_ fd: Int32) {
+        var st = stat(), current = stat()
+        guard AppBundle.resources != nil, fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG,
+              stat(AppBundle.logPath, &current) == 0, st.st_dev == current.st_dev, st.st_ino == current.st_ino else { return }
+        lock.lock()
+        file = (st.st_dev, st.st_ino)
+        lock.unlock()
+    }
+
+    /// `fds` all write the adopted log file (the first is checked). Rotates it past `maxSize`,
+    /// or reopens it when the other process rotated it, and points every fd at the new file.
+    static func check(_ fds: [Int32]) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let known = file, let first = fds.first else { return }
+        var st = stat()
+        guard fstat(first, &st) == 0, st.st_dev == known.dev, st.st_ino == known.ino else { return }
+        let path = AppBundle.logPath
+        var current = stat()
+        let isCurrent = stat(path, &current) == 0 && current.st_dev == st.st_dev && current.st_ino == st.st_ino
+        if isCurrent && st.st_size <= maxSize { return }
+        // Both processes may get here at once: serialize on the log directory so the second
+        // one reopens the file the first created instead of renaming it over the old log.
+        let dir = open((path as NSString).deletingLastPathComponent, O_RDONLY | O_CLOEXEC)
+        if dir >= 0 { _ = flock(dir, LOCK_EX) }
+        defer { if dir >= 0 { close(dir) } }
+        if stat(path, &current) == 0, current.st_dev == st.st_dev, current.st_ino == st.st_ino {
+            guard rename(path, oldPath) == 0 else { return }
+        }
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { return }
+        var opened = stat()
+        guard fstat(fd, &opened) == 0 else { close(fd); return }
+        for target in fds {
+            _ = dup2(fd, target)
+            // dup2 clears close-on-exec: keep private copies (the tap's) out of the VM process.
+            if target > STDERR_FILENO { _ = fcntl(target, F_SETFD, FD_CLOEXEC) }
+        }
+        close(fd)
+        file = (opened.st_dev, opened.st_ino)
     }
 }
 
@@ -156,7 +341,8 @@ enum FirstRun {
                 let panel = NSOpenPanel()
                 AppBundle.configureDiskPanel(panel)
                 panel.message = String(localized: "Raw GPT disk image (e.g. steamos.img). It stays where it is.")
-                if panel.runModal() == .OK, let url = panel.url, AppBundle.isDiskImage(url.path) {
+                if panel.runModal() == .OK, let url = panel.url,
+                   MainActor.assumeIsolated({ AppBundle.acceptDiskSelection(url.path) }) {
                     chosen = url.path
                 }
             } else {
@@ -182,7 +368,7 @@ enum FirstRun {
         var info = String(localized: "FX Steam Launcher needs a SteamOS disk image (steamos.img, ~87 GB sparse).\n\n")
         if !settings.diskImage.isEmpty {
             let path = (settings.diskImage as NSString).abbreviatingWithTildeInPath
-            info += String(localized: "The image chosen in Settings is not readable:\n\(path)\n\n")
+            info += path + "\n\n" + AppBundle.invalidDiskMessage + "\n\n"
         }
         let paths = looked.joined(separator: "\n")
         info += String(localized: "Looked in:\n\(paths)\n\n")

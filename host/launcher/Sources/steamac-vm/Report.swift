@@ -107,6 +107,8 @@ final class GuestLogs {
     private let port: ProgressPort
     private var lastAlive: CFTimeInterval = 0
     private var pending: (id: String, size: Int?, data: Data, done: (Result<Data, OptionError>) -> Void)?
+    /// Largest guest log bundle accepted (Report a Problem uploads at most 20 MB in total).
+    static let maxBundle = 64 << 20
 
     init(port: ProgressPort) { self.port = port }
 
@@ -126,12 +128,20 @@ final class GuestLogs {
         let rest = parts.count > 2 ? parts[2] : ""
         switch parts[0] {
         case "logs-begin":
-            p.size = Int(rest)
-            p.data.reserveCapacity(p.size ?? 0)
+            guard let size = Int(rest), (0...Self.maxBundle).contains(size) else {
+                finish(.failure(OptionError("bundle size \(rest) outside 0...\(Self.maxBundle)"))); return true
+            }
+            p.size = size
+            p.data.reserveCapacity(size)
             pending = p
         case "logs":
             guard let chunk = Data(base64Encoded: rest) else { finish(.failure(OptionError("corrupt chunk"))); return true }
-            pending?.data.append(chunk)
+            guard p.data.count + chunk.count <= (p.size ?? Self.maxBundle) else {
+                finish(.failure(OptionError("bundle larger than announced"))); return true
+            }
+            pending = nil   // `p` is then the only owner: append in place, not to a copy
+            p.data.append(chunk)
+            pending = p
         case "logs-end":
             let digest = SHA256.hash(data: p.data).map { String(format: "%02x", $0) }.joined()
             if p.size != p.data.count {
@@ -192,6 +202,8 @@ struct ReportContext {
     var guest: GuestLogs?
     /// The VM window's picture (nil without a window).
     var captureScreenshot: ((@escaping (CGImage?) -> Void) -> Void)?
+    /// Main-thread controller state and passive HID inventory, only with launcher logs.
+    var controllerDiagnostics: (() -> String)?
     /// After an unexpected VM exit: what happened ("VM process crashed (SIGABRT)").
     var exitSummary: String?
 }
@@ -233,6 +245,13 @@ final class ReportBundle: @unchecked Sendable {
     @MainActor
     static func collect(context: ReportContext, choices: ReportChoices, status: (String) -> Void) async throws -> ReportBundle {
         let b = try ReportBundle(context: context, choices: choices)
+        if choices.launcherLogs, let diagnostics = context.controllerDiagnostics {
+            b.write("controllers.txt", CrashReporting.scrub(diagnostics()))
+        }
+        if choices.launcherLogs {
+            let window = NSApp.windows.first { $0.contentView is VMView }
+            b.write("game-mode.txt", GameModeDiagnostics.snapshot(window: window))
+        }
         status(choices.launcherLogs ? String(localized: "Collecting launcher logs…") : String(localized: "Collecting system information…"))
         await Task.detached { b.writeHostFiles() }.value
         if choices.screenshot {
@@ -298,6 +317,18 @@ final class ReportBundle: @unchecked Sendable {
             return
         }
         if choices.launcherLogs {
+            write("game-policy.log", ReportBundle.scrub(GameModeDiagnostics.policyLog(in: dir)))
+            if let data = RollingLog.tail(dir: runDir, name: "remote-play-status.txt", maxBytes: 16 << 10) {
+                write("remote-play-status.txt", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
+            }
+            if FileManager.default.fileExists(atPath: runDir + "/api.sock") {
+                write("gvproxy-forwards.txt", ReportBundle.scrub(Gvproxy.forwardingDiagnostics(runDir: runDir)))
+            } else {
+                notes.append("gvproxy forward API: no socket (network disabled or supervisor exited)")
+            }
+            if let data = RollingLog.tail(dir: runDir, name: "gvproxy.log", maxBytes: 64 << 10) {
+                write("gvproxy.log", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
+            }
             if let data = RollingLog.tail(dir: runDir, name: RollingLog.launcher.name, maxBytes: ReportBundle.logTail) {
                 write("launcher.log", ReportBundle.scrub(String(decoding: data, as: UTF8.self)))
             } else {
@@ -580,8 +611,8 @@ enum FeedbackSender {
     }
 
     private static func loadItems(_ dir: String) -> [Item] {
-        let order = ["system-info.txt", "settings.txt", "launcher.log", "perf-stall.log", "console.log",
-                     "steamos-logs.tar.gz", "screenshot.png"]
+        let order = ["system-info.txt", "settings.txt", "controllers.txt", "remote-play-status.txt", "gvproxy-forwards.txt",
+                     "gvproxy.log", "launcher.log", "perf-stall.log", "console.log", "steamos-logs.tar.gz", "screenshot.png"]
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
             .filter { $0 != "report.json" && !$0.hasPrefix(".") }
             .sorted { (order.firstIndex(of: $0) ?? 99, $0) < (order.firstIndex(of: $1) ?? 99, $1) }

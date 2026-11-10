@@ -1,0 +1,137 @@
+# Guest side on a GitHub-hosted arm64 Linux runner (native linux/arm64 Docker, as OrbStack on
+# the Mac): the guest kernel (config fragments merged, check-config.sh enforced) booted under
+# QEMU by guest/kernel/smoke-test.sh, the initramfs, busybox-ash checks of guest/initramfs/init,
+# and the fx-progress-agent unit tests. The Mesa/layer/disk steps need the SteamOS rootfs
+# (a multi-GB download from Valve) and are not run here.
+name: Guest build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - guest/**
+      - scripts/**
+      - .github/workflows/guest-build.yml
+  pull_request:
+    paths:
+      - guest/**
+      - scripts/**
+      - .github/workflows/guest-build.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          uname -m; nproc; free -g; df -h .
+          docker version --format '{{.Server.Version}} {{.Server.Arch}}'
+      - name: Kernel tarball cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: work/cache/kernel
+          key: kernel-src-${{ hashFiles('guest/kernel/build.sh') }}
+      - name: Kernel (guest/kernel/build.sh)
+        run: JOBS=$(nproc) guest/kernel/build.sh
+      - name: Generated config vs committed config-steamac
+        run: git diff -- guest/kernel/config-steamac | head -200; git diff --exit-code --stat -- guest/kernel/config-steamac
+      - name: Boot under QEMU (guest/kernel/smoke-test.sh)
+        run: guest/kernel/smoke-test.sh
+      - name: Upload kernel config and smoke log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: kernel
+          path: |
+            work/out/kernel.config
+            work/out/kernel-smoke.log
+            guest/kernel/config-steamac
+          if-no-files-found: ignore
+
+  initramfs:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Builder image cache
+        id: builder-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ runner.temp }}/builder-image.tar
+          key: builder-${{ hashFiles('scripts/builder/**', 'scripts/config.env') }}
+      - name: Builder image (cached, or built with retries for snapshot.debian.org)
+        run: |
+          set -euo pipefail
+          img=$RUNNER_TEMP/builder-image.tar
+          if [ -f "$img" ]; then docker load -i "$img"; exit 0; fi
+          for attempt in 1 2 3; do
+            scripts/build-image.sh builder && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "builder image attempt $attempt failed; retrying in 60 s"; sleep 60
+          done
+          . scripts/config.env
+          docker save -o "$img" "$BUILDER_IMAGE"
+      - name: Initramfs
+        run: scripts/build-image.sh initramfs
+      - name: busybox ash checks of /init
+        run: |
+          set -euo pipefail
+          . scripts/config.env
+          docker run --rm --platform linux/arm64 -v "$PWD:/src:ro" "$BUILDER_IMAGE" sh -euc '
+            bb=$(command -v busybox)
+            "$bb" sh -n /src/guest/initramfs/init
+            { sed -n "/^is_sha512_crypt()/,/^}/p" /src/guest/initramfs/init
+              sed -n "/^set_shadow_hash()/,/^}/p" /src/guest/initramfs/init; } > /tmp/fns.sh
+            cat > /tmp/t.sh <<"EOF"
+            . /tmp/fns.sh
+            ok() { if is_sha512_crypt "$1"; then echo accept; else echo reject; fi; }
+            v1="\$6\$saltstring\$svn8UoSVapNtMuq1ukKS4tPQd8iKwSMHWjl/O817G3uBnIFNjnQJuesI68u4OTLiBFdcbYEdFCoEOfaS35inz1"
+            v2="\$6\$rounds=10000\$saltstringsaltst\$OW1/O6BYHV6BcXZu8QVeXbDWra3Oeqh0sbHbbMCVNSnCM/UrjmM0Dp8vOuZeHBy/YTBmSK6H9qs/y3RnOaw5v."
+            nl="
+            "
+            [ "$(ok "$v1")" = accept ] && [ "$(ok "$v2")" = accept ] || { echo "valid hash rejected"; exit 1; }
+            [ "$(ok "\$6\$x")" = reject ] && [ "$(ok "$v1${nl}root::0:0")" = reject ] || { echo "bad hash accepted"; exit 1; }
+            printf "root:*:1::::::\nsteamos:!:2::::::\n" > /tmp/shadow
+            set_shadow_hash /tmp/shadow /tmp/out "$v1"
+            grep -qxF "steamos:$v1:2::::::" /tmp/out || { echo "shadow not updated"; exit 1; }
+            set_shadow_hash /tmp/shadow /tmp/out2 "a\\nb"; [ "$(wc -l < /tmp/out2)" = 2 ] || { echo "escape expanded"; exit 1; }
+            echo "init helper checks passed"
+          EOF
+            "$bb" sh /tmp/t.sh
+          '
+      - name: initramfs receipt and contents
+        run: |
+          ls -l work/out/initramfs.cpio.gz work/out/initramfs.cpio.gz.inputs.json
+          cat work/out/initramfs.cpio.gz.inputs.json
+          sha256sum work/out/initramfs.cpio.gz
+          zcat work/out/initramfs.cpio.gz | cpio -it 2>/dev/null | head -40
+
+  agent:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+      - name: fx-progress-agent tests and static build (scripts/steps/25-progress-agent.sh, pinned RUST_IMAGE)
+        run: |
+          set -euo pipefail
+          . scripts/config.env
+          mkdir -p work/out work/cache
+          docker run --rm --platform linux/arm64 -e SOURCE_DATE_EPOCH \
+            -v "$PWD:/src:ro" -v "$PWD/work:/work" "$RUST_IMAGE" /src/scripts/steps/25-progress-agent.sh
+          file work/cache/progress-agent/fx-progress-agent

@@ -19,7 +19,7 @@ import Foundation
 ///   guest LINE            handle LINE as if the guest had sent it on fx.progress
 ///   dump PATH             frame + window dump (as SIGUSR1, to PATH)
 ///   settings TAB|close    open the Settings window at TAB (general, display, mouse, controller,
-///                         sound, games, advanced) or close it
+///                         sound, streaming, games, advanced) or close it
 ///   settings-dump PATH    PNG of the Settings window
 ///   restart               Restart VM (as the menu / Settings button)
 ///   activate              bring the app to the front (tests of the background mute / pause)
@@ -38,13 +38,16 @@ import Foundation
 ///   report …              Report a Problem sheet (ReportControl: open, fill, include, preview, send,
 ///                         retry, close, dsn, dump)
 ///   update …              new-version check (UpdateChecker.control: check, startup, press
-///                         download|skip|later|ok|releases, dump PATH, state)
+///                         download|skip|later|ok|releases|cancel|hide|install|quit, dump PATH,
+///                         state)
 ///   pad on|off|test [N] | state  GamepadBridge.control: a guest pad for player N (1 if not
 ///                         given) without a controller (as --input-selftest) / follow the
 ///                         controller again; press A + push the left stick; log the guest pads
 ///                         and the guest's last rumble
 ///   stats …               game statistics (GameStatsStore.control: state, flush, ask, press
 ///                         share|decline, dump PATH, reset-question)
+///   stream-pin PIN        submit the four-digit PIN for a pending Moonlight pairing
+///   stream-status         log Moonlight listener/session and pairing status
 enum DebugControl {
     nonisolated(unsafe) private static var settingsWindow: SettingsWindowController?
     nonisolated(unsafe) static var gameStats: GameSessionTracker?
@@ -52,6 +55,12 @@ enum DebugControl {
 
     static func start(path: String, window wc: WindowController, progress: BootProgress,
                       settingsWindow: SettingsWindowController, gamepad: GamepadBridge?, dump: @escaping (String) -> Void) {
+        // The FIFO drives the whole app (keys into the guest, settings, restart, report send):
+        // a test hook, never part of the app users run.
+        guard !AppBundle.releaseDefaults else {
+            log("control: --control-fifo is ignored in the release app (a test hook for development builds)")
+            return
+        }
         self.settingsWindow = settingsWindow
         self.gamepad = gamepad
         unlink(path)
@@ -59,22 +68,39 @@ enum DebugControl {
             log("control: cannot create FIFO \(path): \(String(cString: strerror(errno)))")
             return
         }
+        // Opened once, read-write: this process then always holds a writer, so the reader never
+        // sees EOF when `echo cmd > fifo` closes, and the path is never opened by name again (it
+        // could be replaced between opens). The FIFO must be the one just made: ours, and no one
+        // else may write commands into it.
+        let fd = open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            log("control: cannot open FIFO \(path): \(String(cString: strerror(errno)))")
+            return
+        }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFIFO, st.st_uid == getuid(),
+              st.st_mode & (S_IWGRP | S_IWOTH) == 0 else {
+            close(fd)
+            log("control: \(path) is not a FIFO of this user writable only by it; control commands are off")
+            return
+        }
+        guard let f = fdopen(fd, "r") else {
+            close(fd)
+            log("control: cannot read FIFO \(path): \(String(cString: strerror(errno)))")
+            return
+        }
         log("control: accepting commands on \(path)")
         let t = Thread {
-            while true {
-                // Re-open after each writer closes (echo cmd > fifo).
-                guard let f = fopen(path, "r") else { return }
-                var line: UnsafeMutablePointer<CChar>?
-                var cap = 0
-                while getline(&line, &cap, f) > 0 {
-                    let cmd = String(cString: line!).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !cmd.isEmpty {
-                        DispatchQueue.main.sync { handle(cmd, wc, progress, dump) }
-                    }
+            var line: UnsafeMutablePointer<CChar>?
+            var cap = 0
+            while getline(&line, &cap, f) > 0 {
+                let cmd = String(cString: line!).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cmd.isEmpty {
+                    DispatchQueue.main.sync { handle(cmd, wc, progress, dump) }
                 }
-                free(line)
-                fclose(f)
             }
+            free(line)
+            fclose(f)
         }
         t.name = "control-fifo"
         t.start()
@@ -188,6 +214,20 @@ enum DebugControl {
             do { try png.write(to: URL(fileURLWithPath: out)); log("control: settings window dumped to \(out)") }
             catch { log("control: settings dump failed: \(error)") }
         case "restart": lifecycle.requestRestart()
+        case "stream-pin":
+            guard let request = settingsWindow?.context.streamHost?.pairing else {
+                log("stream: no pending pairing"); break
+            }
+            guard let pin = args.first, pin.utf8.count == 4,
+                  pin.utf8.allSatisfy({ (48...57).contains($0) }) else {
+                log("stream: PIN must contain four digits"); break
+            }
+            request.submit(pin: pin)
+        case "stream-status":
+            guard let host = settingsWindow?.context.streamHost else {
+                log("stream: unavailable outside the windowed VM process"); break
+            }
+            log("stream: status=\(host.status) clients=\(host.clients.count) pairing=\(host.pairing?.clientName ?? "none")")
         case "close": wc.window.performClose(nil)
         case "suspend": if !(lifecycle.suspender?.suspended ?? true) { lifecycle.menuSuspend() }
         case "resume": lifecycle.suspender?.resume(origin: "control")

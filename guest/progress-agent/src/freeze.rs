@@ -15,6 +15,12 @@
 //! launcher died / was killed). Also thawed when the focus leaves the game,
 //! on agent exit (Drop) and before a new freeze.
 //!
+//! An agent that dies without its Drop (panic=abort, OOM kill, SIGKILL after
+//! the unit's 3 s stop timeout) leaves the game frozen, and its successor
+//! starts without an appid to thaw. So the startup and any thaw without a
+//! remembered freeze look for this user's game scopes whose cgroup.freeze is
+//! still 1 and thaw them too (only this agent freezes game scopes).
+//!
 //! Replies (queued, sent by the main loop with `send_replies`): `game-frozen
 //! <appid>` once a freeze took effect, `game-thawed <appid>` after any thaw
 //! (host request, keepalive timeout, focus change, agent exit), so the
@@ -37,7 +43,9 @@ pub struct Freezer {
 
 impl Freezer {
     pub fn new() -> Freezer {
-        Freezer { appid: None, frozen: Vec::new(), last_keepalive: Instant::now(), replies: Vec::new() }
+        let mut f = Freezer { appid: None, frozen: Vec::new(), last_keepalive: Instant::now(), replies: Vec::new() };
+        f.thaw("agent started");
+        f
     }
 
     pub fn freeze(&mut self, appid: u32) {
@@ -74,7 +82,12 @@ impl Freezer {
     }
 
     pub fn thaw(&mut self, why: &str) {
-        let Some(appid) = self.appid.take() else { return };
+        let Some(appid) = self.appid.take() else {
+            if let Some(root) = user_manager_cgroup() {
+                self.thaw_stale(&root, why);
+            }
+            return;
+        };
         for s in self.frozen.drain(..) {
             // A scope whose game exited is gone: nothing to thaw.
             if s.exists() {
@@ -83,6 +96,18 @@ impl Freezer {
         }
         eprintln!("fx-progress: thawed game {appid} ({why})");
         self.replies.push(format!("game-thawed {appid}"));
+    }
+
+    /// Thaw scopes left frozen by an earlier agent that never ran its Drop.
+    fn thaw_stale(&mut self, root: &Path, why: &str) {
+        for (appid, scopes) in frozen_scopes(root) {
+            for s in &scopes {
+                set_frozen(s, false);
+            }
+            eprintln!("fx-progress: thawed game {appid} found frozen without a freeze request ({why}): {}",
+                scopes.iter().map(|s| s.display().to_string()).collect::<Vec<_>>().join(" "));
+            self.replies.push(format!("game-thawed {appid}"));
+        }
     }
 
     /// Thaw when the host stopped sending keepalives, or the focus left the game.
@@ -182,6 +207,17 @@ pub(crate) fn game_scopes(root: &Path) -> std::io::Result<BTreeMap<u32, Vec<Path
     Ok(out)
 }
 
+/// Game scopes whose own cgroup.freeze is 1 (what set_frozen writes; a
+/// scope merely below a frozen parent reads 0 and is not ours to thaw).
+fn frozen_scopes(root: &Path) -> BTreeMap<u32, Vec<PathBuf>> {
+    let mut games = game_scopes(root).unwrap_or_default();
+    games.retain(|_, scopes| {
+        scopes.retain(|s| std::fs::read_to_string(s.join("cgroup.freeze")).is_ok_and(|v| v.trim() == "1"));
+        !scopes.is_empty()
+    });
+    games
+}
+
 fn find_scopes(entries: std::fs::ReadDir, depth: usize, out: &mut BTreeMap<u32, Vec<PathBuf>>) {
     for e in entries.flatten() {
         if !e.file_type().map_or(false, |t| t.is_dir()) {
@@ -206,5 +242,41 @@ fn find_scopes(entries: std::fs::ReadDir, depth: usize, out: &mut BTreeMap<u32, 
                 find_scopes(children, depth + 1, out);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_thaws_scopes_left_frozen() {
+        let root = std::env::temp_dir().join(format!("fx-freeze-test-{}", std::process::id()));
+        let app = root.join("app.slice");
+        let scope = |name: &str, freeze: Option<&str>| {
+            let dir = app.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            if let Some(v) = freeze {
+                std::fs::write(dir.join("cgroup.freeze"), v).unwrap();
+            }
+            dir
+        };
+        let stale = scope("app-steam-app570-1.scope", Some("1\n"));
+        let running = scope("app-steam-app730-2.scope", Some("0\n"));
+        let unknown = scope("app-steam-app440-3.scope", None);
+        scope("app-other-9.scope", Some("1\n"));
+
+        let found = frozen_scopes(&root);
+        assert_eq!(found.keys().copied().collect::<Vec<_>>(), vec![570]);
+
+        let mut f = Freezer { appid: None, frozen: Vec::new(), last_keepalive: Instant::now(), replies: Vec::new() };
+        f.thaw_stale(&root, "test");
+        // systemctl has no such unit here: the cgroup.freeze fallback wrote 0.
+        assert_eq!(std::fs::read_to_string(stale.join("cgroup.freeze")).unwrap().trim(), "0");
+        assert_eq!(std::fs::read_to_string(running.join("cgroup.freeze")).unwrap().trim(), "0");
+        assert!(!unknown.join("cgroup.freeze").exists());
+        assert_eq!(f.replies, vec!["game-thawed 570".to_string()]);
+        assert!(frozen_scopes(&root).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

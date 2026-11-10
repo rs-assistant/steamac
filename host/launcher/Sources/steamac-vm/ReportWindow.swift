@@ -181,7 +181,7 @@ struct ReportView: View {
                       String(localized: "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)."))
                 check($model.choices.guestLogs, "Include SteamOS logs (system journal, Steam/Proton logs)",
                       model.context.guest != nil
-                        ? String(localized: "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Steam IDs, account names and email addresses are removed where recognisable.")
+                        ? String(localized: "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac.")
                         : String(localized: "SteamOS is not running: only its console log of this session is included."))
                 check($model.choices.screenshot, "Include a screenshot of the VM window",
                       model.hasWindow ? String(localized: "Off by default: the picture may show your Steam account name, friends or other personal information.")

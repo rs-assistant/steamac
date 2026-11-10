@@ -26,6 +26,11 @@ if Supervisor.isChild, let driver = Supervisor.profileDriver { options.vulkanDri
 settings.bootedDriver = Supervisor.isChild ? options.vulkanDriver : nil
 settings.bootedDXMT = Supervisor.isChild ? options.wmtrLibrary != nil : nil
 
+// Decide before anything can initialise Metal: off means no Apple HUD completion handlers,
+// not just a hidden overlay. Enabling the HUD later takes effect on the next VM boot.
+MetalHUD.configure(isChild: Supervisor.isChild, headless: options.headless, requested: settings.metalHUD,
+                   driver: options.vulkanDriver)
+
 if options.selftestMetalCache { MetalCompilerCache.selfTest() }
 // Before CrashReporting's GPU tags, the window or either Vulkan driver can initialise Metal.
 MetalCompilerCache.prepare()
@@ -33,11 +38,6 @@ MetalCompilerCache.prepare()
 // MoltenVK (loaded by virglrenderer in this process) logs every instance/device creation at info
 // level, which buries the guest console. Errors only, unless the user asks for more.
 setenv("MVK_CONFIG_LOG_LEVEL", "1", 0)
-// Metal Performance HUD (Settings > Display, View menu, Ctrl+Cmd+P): loads libMTLHud for this VM
-// process before Metal is first used; the window's layer then shows or hides it at runtime
-// (developerHUDProperties `mode`, default "off" in WindowController). Without this variable
-// macOS 15 ignores those properties. Command buffers that present nothing (MoltenVK's) get no HUD.
-if Supervisor.isChild && !options.headless { setenv("MTL_HUD_ENABLED", "1", 1) }
 
 // Crash reporting (Settings > General; both the supervisor and each VM process).
 CrashReporting.setUp(options: options, settings: settings)
@@ -50,6 +50,7 @@ if options.selftestPill { PillSelfTest.run(options) }
 if options.selftestSettings { SettingsSelfTest.run(options, overrides: settingsOverrides) }
 if options.selftestProvision { ProvisionSelfTest.run(options) }
 if options.selftestRemotePlay { RemotePlaySelfTest.run() }
+if options.selftestStream { StreamSelfTest.run() }
 if options.selftestPointer { PointerSelfTest.run() }
 if options.selftestGameLayers { GameLayerSelfTest.run() }
 if options.createDisk != nil { CreateDiskCLI.run(options, settings: settings) }
@@ -156,6 +157,15 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
         requestShutdown()
     }
 
+    /// Sparkle's Install and Relaunch (SparkleUpdates): SteamOS powers off as with Shut Down
+    /// (power key, grace period, never a force quit); Sparkle installs once the launcher is gone.
+    /// A shutdown or restart already under way serves (a restart became the update's relaunch).
+    func shutdownForUpdate() {
+        if requestedAt != nil { log("update: SteamOS is already shutting down"); return }
+        if let progress, case .shutdown = progress.state.phase { log("update: SteamOS is already shutting down"); return }
+        requestShutdown()
+    }
+
     /// "Restart VM" (menu / Settings): power the guest off cleanly, then the supervisor boots it
     /// again with the current settings.
     func requestRestart() {
@@ -217,12 +227,24 @@ final class Lifecycle: NSObject, NSApplicationDelegate {
     /// a user's Quit asks first (the suspended state is lost; SuspendController.askQuit, answered
     /// later without a modal loop); logout / restart / shutdown of the Mac does not.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Sparkle's installer asks the app to quit once the update is handed over; SteamOS's
+        // shutdown for it is under way (shutdownForUpdate): another request would force-quit.
+        if Lifecycle.quitByUpdater {
+            log("update: quit request from Sparkle's installer: SteamOS's shutdown for the update is under way")
+            return .terminateCancel
+        }
         if requestedAt == nil, let suspender, suspender.suspended, !Lifecycle.quitBySystem {
             suspender.askQuit { [weak self] in self?.requestShutdown() }
             return .terminateCancel
         }
         requestShutdown()
         return .terminateCancel
+    }
+
+    private static var quitByUpdater: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              let pid = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))?.int32Value, pid > 0 else { return false }
+        return SparkleUpdates.isUpdater(pid: pid)
     }
 
     /// The quit Apple event comes from a logout, restart or shutdown of the Mac.
@@ -254,6 +276,7 @@ extension Lifecycle: NSMenuItemValidation {
             item.state = LauncherSettings.shared.metalHUD ? .on : .off
             // libMTLHud's own item (MainMenu.adoptHUDMenuItems): titled and ticked like the View menu item.
             if item.tag == MainMenu.adoptedHUDItemTag { item.title = String(localized: "Show Metal Performance HUD (Ctrl+Cmd+P)") }
+            item.toolTip = MetalHUD.driver == .kosmickrisp ? MetalHUD.kosmicKrispNote : MetalHUD.restartNote
         }
         if item.action == #selector(menuCheckForUpdates) {
             item.title = UpdateChecker.shared.menuTitle
@@ -289,6 +312,14 @@ do {
 
     let progress = BootProgress(restarting: Supervisor.bootNumber > 1)
     lifecycle.progress = progress
+    progress.onBootFailure = { detail in
+        guard !options.headless, let window = lifecycle.window?.window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = String(localized: "SteamOS could not start")
+        alert.informativeText = detail
+        alert.beginSheetModal(for: window)
+    }
     // Session console log for Report a Problem (run dir, removed when the launcher exits).
     if let dir = Supervisor.runDir { RollingLog.console.open(dir: dir) }
     console.onLine = { line in
@@ -298,10 +329,17 @@ do {
         GameSessionTracker.consoleLine(line)
     }
     let progressPort = try ProgressPort()
-    // Log bundles requested by Report a Problem arrive on the same port.
+    // Log bundles and compact-disk replies share fx.progress with BootProgress.
     let guestLogs = GuestLogs(port: progressPort)
-    progressPort.start { line in if !guestLogs.handle(line) { progress.guestLine(line) } }
+    let diskCompact = DiskCompact(port: progressPort)
+    progressPort.start { line in
+        if guestLogs.handle(line) { return }
+        if diskCompact.handle(line) { return }
+        progress.guestLine(line)
+    }
     progress.onRebootIntent = {
+        // A prepared update installs instead and Sparkle opens the new launcher (SparkleUpdates).
+        if UpdateChecker.shared.takeOverReboot() { return }
         // Tell the supervisor to boot again once libkrun exits; remember where the window was
         // (unless Settings changed the default window size: then the next boot opens at that).
         guard let dir = Supervisor.runDir else { return }
@@ -469,6 +507,20 @@ do {
         keyboardLayouts.focused(f)
     }
     keyboardLayouts.start()
+    let streamCapture = StreamCapture(presenter: presenter, renderer: renderer, view: wc.view)
+    let streamInput = StreamInput(inputs: inputs!, gamepads: gamepad)
+    let streamDisplay = StreamDisplayControl(begin: { [weak wc] width, height in
+        let maxSide = VM.maxDisplaySide & ~1
+        wc?.beginStreamDisplay(width: min(maxSide, max(2, width & ~1)),
+                               height: min(maxSide, max(2, height & ~1)))
+    }, end: { [weak wc] in wc?.endStreamDisplay() })
+    let streamEnvironment = StreamEnvironment(ctx: vm.ctx, capture: streamCapture, input: streamInput,
+                                              sound: sound, display: streamDisplay)
+    let streamHost = GameStreamHost(environment: streamEnvironment, hostName: StreamPairingPrompt.hostName)
+    let streamPrompt = StreamPairingPrompt(host: streamHost)
+    let streamStatusSubscription = streamHost.$status.sink { status in
+        if case .streaming = status { gamePause.streaming = true } else { gamePause.streaming = false }
+    }
     let suspender = SuspendController(ctx: vm.ctx, clock: clockPort, sleepPort: sleepPort, window: wc, presenter: presenter,
                                       stall: stall, gamePause: gamePause, gpuCounters: gpuCounters)
     suspender.onShutdown = { lifecycle.requestShutdown() }
@@ -479,19 +531,32 @@ do {
         clipboard?.vmPaused = paused
         gameStats.vmPaused = paused
         if paused {
+            // Do not accept launches against a frozen guest; resume restores the opt-in listener.
+            streamHost.setEnabled(false)
             activity.map(ProcessInfo.processInfo.endActivity)
             activity = nil
         } else if activity == nil {
             activity = beginVMActivity()
+            streamHost.setEnabled(settings.streamingHost)
         }
     }
     lifecycle.suspender = suspender
+    let streamSubscription = settings.$streamingHost.receive(on: DispatchQueue.main).sink { on in
+        streamHost.setEnabled(on && !suspender.paused)
+    }
     sleepPort?.start { line in suspender.sleepPortLine(line, allowed: lifecycle.canPause) }
     wc.onWakeRequest = { what in suspender.resume(origin: what) }
     wc.onGuestSizeRequest = { w, h in vm.resizeDisplay(width: w, height: h) }
     let settingsContext = SettingsContext(settings: settings, sound: sound, restart: { lifecycle.requestRestart() },
                                           vmHasPad: gamepad != nil, vmHasSound: vm.hasSound,
-                                          diskPath: options.disks.first?.path)
+                                          diskPath: options.disks.first?.path, streamHost: streamHost,
+                                          compactDisk: diskCompact)
+    gamepad?.onInputMonitoringNeeded = { needed in
+        settingsContext.needsInputMonitoring = needed
+    }
+    settingsContext.requestInputMonitoring = {
+        gamepad?.requestInputMonitoring()
+    }
     let settingsWindow = SettingsWindowController(context: settingsContext)
     lifecycle.settingsContext = settingsContext
     lifecycle.settingsWindow = settingsWindow
@@ -499,7 +564,8 @@ do {
     func openReport(_ origin: String, on parent: NSWindow) {
         wc.releasePointer()
         let context = ReportContext(origin: origin, options: options, runDir: Supervisor.runDir, guest: guestLogs,
-                                    captureScreenshot: { done in wc.captureWindow { drawable, _ in done(drawable) } })
+                                    captureScreenshot: { done in wc.captureWindow { drawable, _ in done(drawable) } },
+                                    controllerDiagnostics: { gamepad?.diagnosticLines().joined(separator: "\n") ?? "No gamepad bridge" })
         MainActor.assumeIsolated { _ = ReportSheet.present(on: parent, context: context) }
     }
     lifecycle.report = { openReport("menu", on: wc.window) }
@@ -532,7 +598,7 @@ do {
     if options.fullscreen && !wc.window.styleMask.contains(.fullScreen) { wc.window.toggleFullScreen(nil) }
     gamepad?.start()
     // New-version check (first boot of this launch; Settings > General), after the window is up.
-    UpdateChecker.shared.start { [weak wc] in wc?.window }
+    UpdateChecker.shared.start(vmWindow: { [weak wc] in wc?.window }, shutdownForUpdate: { lifecycle.shutdownForUpdate() })
     if let d = options.inputSelftestDelay { InputSelfTest.schedule(after: d, window: wc, gamepad: gamepad) }
     if let d = options.resizeSelftestDelay {
         ResizeSelfTest.start(after: d, window: wc, display: display, progress: progress,
@@ -544,12 +610,16 @@ do {
     console.start()
     vm.start()
     withExtendedLifetime((presenter, gamepad, progressPort, keyboardLayouts, supervisorWatch, perfSubscription, gamePause, suspender, clipboard,
-                          gameStats)) {
+                          gameStats, streamCapture, streamInput, streamHost, streamPrompt, streamSubscription, streamStatusSubscription)) {
         app.run()
     }
 } catch let error as DiskLock.InUse {
     log("error: \(error)")
     MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS is already running", error.localizedDescription) }
+    exit(CrashReporting.startupRejectedStatus)
+} catch let error as DiskLock.AccessDenied {
+    log("error: \(error)")
+    MainActor.assumeIsolated { AppBundle.alertIfLaunchedFromFinder("SteamOS could not start", error.localizedDescription) }
     exit(CrashReporting.startupRejectedStatus)
 } catch {
     fatal("\(error)")

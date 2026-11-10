@@ -65,7 +65,7 @@ $(OUT)/wmtr_present_test: tests/wmtr_present_test.m $(OUT)/libwmtr_host.dylib
 # DXMT's own guest API (winemetal_thunks.c) over the wmtr client into the production libwmtr_host
 $(OUT)/wmtr_dxmt_test: tests/wmtr_dxmt_test.m tests/dxmt-shim/wineunixlib.h src/wmtr_client.c include/*.h src/*.inc $(OUT)/libwmtr_host.dylib
 	$(CC) -Itests/dxmt-shim $(CFLAGS) -DNDEBUG -o $@ tests/wmtr_dxmt_test.m src/wmtr_client.c $(DXMT)/src/winemetal/winemetal_thunks.c \
-	  -L$(OUT) -lwmtr_host -Wl,-rpath,@executable_path -framework Foundation -framework Metal
+	  -L$(OUT) -lwmtr_host -Wl,-rpath,@executable_path -framework Foundation -framework Metal -framework QuartzCore
 $(OUT)/dxmt_test.metallib: tests/dxmt_test.metal | $(OUT)
 	xcrun -sdk macosx metal -o $@ $<
 $(OUT)/wmtr_loopback: tests/wmtr_loopback.m src/wmtr_host.m src/wmtr_objects.h src/wmtr_objects.inc src/wmtr_object_cmds.inc src/wmtr_vr.m src/wmtr_client.c include/*.h | $(OUT)
@@ -102,7 +102,8 @@ dxmt-payload:
 PREFIX ?= ../work/out/host
 install: $(OUT)/libwmtr_host.dylib
 	install -d $(PREFIX)/lib
-	install -m 755 $< $(PREFIX)/lib/libwmtr_host.dylib
+	@tmp=$$(mktemp "$(PREFIX)/lib/.libwmtr_host.XXXXXX"); \
+	  install -m 755 $< "$$tmp" && mv -f "$$tmp" "$(PREFIX)/lib/libwmtr_host.dylib"
 
 clean:
 	rm -rf $(OUT)

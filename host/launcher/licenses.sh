@@ -164,10 +164,21 @@ source('libepoxy', epoxy_version.group(1), 'MIT', host + '/libepoxy.0.dylib',
 sentry = root / 'host/launcher/.build/checkouts/sentry-cocoa'
 source('sentry-cocoa', '9.30.0', None, launcher,
        'https://github.com/getsentry/sentry-cocoa/tree/9.30.0', sentry)
+# MIT, plus the notices of the code it includes (bsdiff, sais-lite, ed25519, SUSignatureVerifier).
+source('Sparkle', '2.10.1', 'MIT AND BSD-2-Clause AND Zlib', host + '/Sparkle.framework',
+       'https://github.com/sparkle-project/Sparkle/tree/2.10.1', root / 'host/launcher/.build/checkouts/Sparkle')
 zstd = root / 'host/launcher/Sources/CZstd/zstd'
 zstd_version = require(zstd / 'VERSION').read_text().split()[0]
 source('zstd', zstd_version, 'BSD-3-Clause', launcher,
        'https://github.com/facebook/zstd/tree/v' + zstd_version, zstd)
+enet = root / 'host/launcher/Sources/CEnet/enet'
+enet_commit = require(enet / 'VERSION').read_text().split()[0]
+source('enet', enet_commit[:10], 'MIT', launcher,
+       'https://github.com/cgutman/enet/tree/' + enet_commit, enet)
+nanors = root / 'host/launcher/Sources/CNanors/nanors'
+nanors_commit = require(nanors / 'VERSION').read_text().split()[0]
+source('nanors', nanors_commit[:10], 'MIT', launcher,
+       'https://github.com/sleepybishop/nanors/tree/' + nanors_commit, nanors)
 
 # Only resolved target-specific packages count; build dependencies and proc macros are
 # included since their license conditions may apply to generated/embedded code.
@@ -191,7 +202,11 @@ rust_graph(root / 'guest/progress-agent/Cargo.toml', '', 'aarch64-unknown-linux-
 
 # go version -m describes the exact binary (including versions other than the current
 # module graph). Download each module to an isolated, persistent cache, never a guess.
-goenv = dict(os.environ, GOMODCACHE=str(cache), GOWORK='off')
+# The user's Go configuration (go env -w, GOPROXY/GOSUMDB/GOFLAGS) does not apply: sources come
+# from the public proxy, verified against sum.golang.org and the binary's own recorded sums.
+goenv = dict(os.environ, GOMODCACHE=str(cache), GOWORK='off', GOENV='off', GOFLAGS='-modcacherw',
+             GOPROXY='https://proxy.golang.org', GOSUMDB='sum.golang.org', GONOSUMDB='', GOPRIVATE='',
+             GONOPROXY='', GOINSECURE='')
 for binary in ('gvproxy', 'desync'):
     location = res + '/' + binary
     lines = run('go', 'version', '-m', str(root / 'work/out/host/bin' / binary)).splitlines()
@@ -207,6 +222,9 @@ for binary in ('gvproxy', 'desync'):
         info = json.loads(run('go', 'mod', 'download', '-json', module + '@' + version, env=goenv, cwd=root))
         if info.get('Error'):
             raise RuntimeError(f'{module}@{version}: {info["Error"]}')
+        recorded = next((r for r in remainder if r.startswith('h1:')), None)
+        if recorded and info.get('Sum') != recorded:
+            raise RuntimeError(f'{binary}: {module}@{version}: downloaded sum {info.get("Sum")} != {recorded} recorded in the binary')
         path = Path(info['Dir'])
         docs = top_docs(path)
         # Some Go submodules inherit the parent repository's license. Go modules

@@ -23,6 +23,9 @@ final class Gvproxy {
 
     static func locate(explicit: String?) -> String? {
         if let explicit { return explicit }
+        // The app bundle runs its own Resources/gvproxy (AppBundle sets it) or --gvproxy only,
+        // never a copy found in Homebrew or PATH (another admin's binary, another version).
+        guard !AppBundle.releaseDefaults else { return nil }
         let exe = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let exeDir = exe.resolvingSymlinksInPath().deletingLastPathComponent().path
         let candidates = [
@@ -107,6 +110,21 @@ final class Gvproxy {
         guard p.terminationStatus == 0 else {
             throw OptionError("gvproxy \(transport) \(local): \(String(decoding: response, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))")
         }
+    }
+
+    /// Read-only, on-demand report probe: distinguish lost forwards/API from an idle Steam.
+    static func forwardingDiagnostics(runDir: String) -> String {
+        let p = Process(), output = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        p.arguments = ["--silent", "--show-error", "--fail-with-body", "--max-time", "2",
+                       "--unix-socket", runDir + "/api.sock", "http://localhost/services/forwarder/all"]
+        p.standardOutput = output; p.standardError = output
+        do { try p.run() }
+        catch { return "gvproxy forward API unavailable: \(error)\n" }
+        let response = output.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(decoding: response.prefix(64 << 10), as: UTF8.self)
+        return "gvproxy forward API exit: \(p.terminationStatus)\n" + text + "\n"
     }
 
     static func attach(ctx: UInt32, socket: String) throws {

@@ -22,6 +22,9 @@ enum Supervisor {
     static var bootNumber: Int { Int(ProcessInfo.processInfo.environment[bootEnv] ?? "1") ?? 1 }
     static var windowFrame: String? { ProcessInfo.processInfo.environment[frameEnv] }
     static func rebootMarker(_ dir: String) -> String { dir + "/reboot" }
+    /// Sparkle prepared an update (SparkleUpdates): it installs once this launcher exits, so no
+    /// VM process boots from the bundle again.
+    static func updateMarker(_ dir: String) -> String { dir + "/update" }
     private static let profileDriverEnv = "STEAMAC_PROFILE_DRIVER"
     private static let profileLaunchEnv = "STEAMAC_PROFILE_LAUNCH"
     static var profileDriver: LauncherSettings.VulkanDriver? {
@@ -73,12 +76,17 @@ enum Supervisor {
         sweepStaleRunDirs()
         // sun_path is 104 bytes on macOS: keep the run dir short.
         let dir = "/tmp/steamac-\(getpid())"
+        // Our own leftover of a reused pid goes; another user's entry cannot be removed (sticky
+        // /tmp) and makes mkdir fail below. Never reuse an existing directory: it could belong to
+        // another local user (config.img, sockets and logs live here), so it must be ours and new.
         try? FileManager.default.removeItem(atPath: dir)
-        do {
-            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-        } catch {
-            fatal("cannot create \(dir): \(error)")
+        guard mkdir(dir, 0o700) == 0 else {
+            fatal("cannot create \(dir): \(String(cString: strerror(errno))) (if it exists, another user may own it)")
+        }
+        var st = stat()
+        guard lstat(dir, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR, st.st_uid == getuid(),
+              chmod(dir, 0o700) == 0 else {   // mkdir's mode is masked by umask: set it exactly
+            fatal("\(dir) is not a directory owned by this user")
         }
         RollingLog.launcher.open(dir: dir)
 
@@ -201,6 +209,10 @@ enum Supervisor {
             CrashReporting.vmExited(vmExit)
 
             let marker = rebootMarker(dir)
+            if FileManager.default.fileExists(atPath: updateMarker(dir)), FileManager.default.fileExists(atPath: marker) {
+                try? FileManager.default.removeItem(atPath: marker)
+                log("update: not booting again: the prepared update installs now that the launcher exits")
+            }
             if let contents = try? String(contentsOfFile: marker, encoding: .utf8) {
                 try? FileManager.default.removeItem(atPath: marker)
                 let text = contents.trimmingCharacters(in: .whitespacesAndNewlines)

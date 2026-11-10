@@ -2,10 +2,34 @@ import Darwin
 import Foundation
 
 /// Owns UDP 27036 exclusively (never SO_REUSEPORT). gvproxy handles TCP and the other
-/// streaming UDP ports; a private loopback forward lets this relay rewrite discovery status.
+/// streaming UDP ports, bound to the Mac's LAN addresses only; a private loopback forward lets
+/// this relay rewrite discovery status.
 /// Periodic discovery queries turn guest status replies into LAN announcements: gvproxy's
 /// user-mode NAT cannot deliver unsolicited guest subnet broadcasts to the physical LAN.
 final class RemotePlayRelay {
+    /// Supervisor-owned snapshots survive guest sleep and are opt-in report attachments.
+    struct Health {
+        var lanPackets: UInt64 = 0
+        var guestPackets: UInt64 = 0
+        var guestStatuses: UInt64 = 0
+        var lastLANPacket: Date?
+        var lastGuestPacket: Date?
+        var lastGuestStatus: Date?
+        var sendFailures: UInt64 = 0
+        var lastSendError = "none"
+
+        func text(now: Date) -> String {
+            func age(_ date: Date?) -> String {
+                date.map { String(format: "%.1f s ago", max(0, now.timeIntervalSince($0))) } ?? "never"
+            }
+            return """
+            LAN packet forward attempts: \(lanPackets); last \(age(lastLANPacket))
+            guest packets received: \(guestPackets); last \(age(lastGuestPacket))
+            guest Steam statuses received: \(guestStatuses); last \(age(lastGuestStatus))
+            send failures: \(sendFailures); last \(lastSendError)
+            """
+        }
+    }
     private struct Interface {
         let address: UInt32
         let mask: UInt32
@@ -21,6 +45,9 @@ final class RemotePlayRelay {
         let source: DispatchSourceRead
         let peer: sockaddr_in?
         var touched = Date()
+        /// LAN datagrams so far, counted up to 2: a peer that sent one only (a discovery probe,
+        /// a stray or spoofed datagram) expires after `probeTimeout`, not `idleTimeout`.
+        var packets = 0
         init(fd: Int32, source: DispatchSourceRead, peer: sockaddr_in?) {
             self.fd = fd; self.source = source; self.peer = peer
         }
@@ -38,18 +65,36 @@ final class RemotePlayRelay {
     private var sessions: [PeerKey: Session] = [:]
     private var poll: Session?
     private var forwards: [(String, String)] = []
+    /// gvproxy API calls (one curl each, up to 3 s): off the relay queue, so re-exposing after a
+    /// network change never stalls discovery or streaming datagrams.
+    private let forwardQueue = DispatchQueue(label: "steamac.remote-play.forwards")
+    /// The streaming forwards (UDP 27031–27035, TCP 27036–27037) per Mac LAN address
+    /// (forwardQueue only). Bound to those addresses, not 0.0.0.0: gvproxy's listeners have no
+    /// source check, and on the wildcard they would also take connections arriving on VPN
+    /// (utun) and other point-to-point or non-LAN interfaces.
+    private var lanForwards: [UInt32: [(String, String)]] = [:]
+    /// After `stop`: a re-expose still queued must not add forwards again (forwardQueue only).
+    private var forwardsStopped = false
+    /// The LAN address set last handed to forwardQueue (relay queue only).
+    private var exposedAddresses: Set<UInt32> = []
+    private static let maxSessions = 64
+    /// One source address may hold this many sessions: it cannot push every other client out.
+    private static let maxSessionsPerAddress = 8
+    private static let idleTimeout: TimeInterval = 120
+    private static let probeTimeout: TimeInterval = 10
     private let clientID = UInt64.random(in: 1...UInt64.max)
     private var sequence: UInt64 = 0
     private var loggedRequest = false
     private var loggedReply = false
+    private var health = Health()
 
     init(proxy: Gvproxy) { self.proxy = proxy }
 
     func start() throws {
         // Reserve before exposing anything. A running Mac Steam client normally owns this
         // socket; fail closed, log the conflict, and leave that client's ports alone.
-        listener = try Self.socket(address: INADDR_ANY, port: 27036)
         do {
+            listener = try Self.socket(address: INADDR_ANY, port: 27036)
             var yes: Int32 = 1
             guard setsockopt(listener, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout.size(ofValue: yes))) == 0 else {
                 throw Self.error("enable LAN broadcast")
@@ -64,10 +109,11 @@ final class RemotePlayRelay {
             let privatePort = UInt16(bigEndian: local.sin_port)
             try expose("udp", "127.0.0.1:\(privatePort)", guestPort: 27036)
             upstream = Self.address(inet_addr("127.0.0.1"), privatePort)
-            for port in 27031...27035 { try expose("udp", "0.0.0.0:\(port)", guestPort: port) }
-            for port in 27036...27037 { try expose("tcp", "0.0.0.0:\(port)", guestPort: port) }
             interfaces = Self.lanInterfaces()
             localAddresses = Self.hostAddresses()
+            let initial = Set(interfaces.map(\.address))
+            exposedAddresses = initial
+            forwardQueue.sync { reconcileForwards(initial) }
             let source = DispatchSource.makeReadSource(fileDescriptor: listener, queue: queue)
             source.setEventHandler { [weak self] in self?.receiveLAN() }
             // Cancellation owns the descriptor: no close/reuse race with an in-flight handler.
@@ -81,9 +127,11 @@ final class RemotePlayRelay {
             timer.setEventHandler { [weak self] in self?.tick() }
             self.timer = timer
             timer.resume()
-            log("remote-play: LAN relay on, UDP 27031–27036 / TCP 27036–27037 → 192.168.127.2; allow Local Network access")
+            let lan = interfaces.isEmpty ? "no LAN address yet" : interfaces.map(\.text).joined(separator: ", ")
+            log("remote-play: LAN relay on, UDP 27031–27036 / TCP 27036–27037 → 192.168.127.2 (on \(lan)); allow Local Network access")
         } catch {
             stop()
+            writeStatus(state: "disabled: \(error)")
             throw error
         }
     }
@@ -91,6 +139,37 @@ final class RemotePlayRelay {
     private func expose(_ proto: String, _ local: String, guestPort: Int) throws {
         try proxy.forward(protocol: proto, local: local, remote: "192.168.127.2:\(guestPort)")
         forwards.append((proto, local))
+    }
+
+    /// Make the streaming forwards match `wanted` (the Mac's LAN addresses): withdraw those of
+    /// addresses that went away (DHCP renewal, Wi-Fi switch, cable out), add the new ones.
+    /// Failures are logged, not thrown: discovery keeps working, and an address whose forwards
+    /// failed is tried again only after it leaves and comes back (no curl every 5 s).
+    private func reconcileForwards(_ wanted: Set<UInt32>) {
+        guard !forwardsStopped else { return }
+        let gone = lanForwards.keys.filter { !wanted.contains($0) }
+        for address in gone {
+            for (proto, local) in lanForwards.removeValue(forKey: address) ?? [] {
+                try? proxy.forward(protocol: proto, local: local, remote: nil)
+            }
+            log("remote-play: streaming ports withdrawn from \(Self.text(address))")
+        }
+        let ports: [(String, Int)] = (27031...27035).map { ("udp", $0) } + (27036...27037).map { ("tcp", $0) }
+        for address in wanted.subtracting(lanForwards.keys) {
+            let ip = Self.text(address)
+            var done: [(String, String)] = []
+            do {
+                for (proto, port) in ports {
+                    let local = "\(ip):\(port)"
+                    try proxy.forward(protocol: proto, local: local, remote: "192.168.127.2:\(port)")
+                    done.append((proto, local))
+                }
+                log("remote-play: streaming ports UDP 27031–27035 / TCP 27036–27037 exposed on \(ip)")
+            } catch {
+                log("remote-play: cannot expose streaming ports on \(ip): \(error)")
+            }
+            lanForwards[address] = done
+        }
     }
 
     func stop() {
@@ -102,6 +181,14 @@ final class RemotePlayRelay {
             if let source = readSource { source.cancel(); readSource = nil }
             else if listener >= 0 { close(listener) }
             listener = -1
+            writeStatus(state: "stopped")
+        }
+        forwardQueue.sync {
+            forwardsStopped = true
+            for (proto, local) in lanForwards.values.joined() {
+                try? proxy.forward(protocol: proto, local: local, remote: nil)
+            }
+            lanForwards.removeAll()
         }
         for (proto, local) in forwards.reversed() {
             try? proxy.forward(protocol: proto, local: local, remote: nil)
@@ -109,15 +196,48 @@ final class RemotePlayRelay {
         forwards.removeAll()
     }
 
+    private func writeStatus(state: String) {
+        let now = Date()
+        let text = """
+        checked at: \(ISO8601DateFormatter.string(from: now, timeZone: .gmt, formatOptions: [.withInternetDateTime]))
+        relay: \(state)
+        discovery listener open: \(listener >= 0)
+        configured forwards: \(forwards.count) (see gvproxy-forwards.txt for the live API table)
+        LAN IPv4 interfaces: \(interfaces.count)
+        client sessions: \(sessions.count)
+        guest discovery query attempts: \(sequence)
+        \(health.text(now: now))
+
+        """
+        try? text.write(toFile: proxy.runDir + "/remote-play-status.txt", atomically: true, encoding: .utf8)
+    }
+
+    private func sent(_ result: Int) {
+        if result < 0 {
+            health.sendFailures &+= 1
+            health.lastSendError = String(cString: strerror(errno))
+        }
+    }
+
     private func tick() {
         interfaces = Self.lanInterfaces() // Wi-Fi/Ethernet may change while the VM is up.
         localAddresses = Self.hostAddresses()
-        let expired = sessions.filter { Date().timeIntervalSince($0.value.touched) > 120 }.map(\.key)
+        let addresses = Set(interfaces.map(\.address))
+        if addresses != exposedAddresses {
+            exposedAddresses = addresses
+            forwardQueue.async { [weak self] in self?.reconcileForwards(addresses) }
+        }
+        let now = Date()
+        let expired = sessions.filter {
+            let limit = $0.value.packets > 1 ? Self.idleTimeout : Self.probeTimeout
+            return now.timeIntervalSince($0.value.touched) > limit
+        }.map(\.key)
         for key in expired { sessions.removeValue(forKey: key)?.stop() }
         sequence &+= 1
         if let poll {
             sendConnected(RemotePlayPacket.discovery(clientID: clientID, sequence: sequence), fd: poll.fd)
         }
+        writeStatus(state: "running")
     }
 
     private func receiveLAN() {
@@ -144,18 +264,38 @@ final class RemotePlayRelay {
                 let session: Session
                 if let existing = sessions[key] { session = existing }
                 else {
-                    guard sessions.count < 64 else { continue }
+                    makeRoom(for: ip)
                     session = try makeSession(peer: peer); sessions[key] = session
                 }
                 session.touched = Date()
+                if session.packets < 2 { session.packets += 1 }
                 // Streaming traffic takes the allocation-free path through the shared buffer.
-                buffer.withUnsafeBytes { bytes in _ = send(session.fd, bytes.baseAddress, count, 0) }
+                health.lanPackets &+= 1
+                health.lastLANPacket = Date()
+                buffer.withUnsafeBytes { bytes in sent(send(session.fd, bytes.baseAddress, count, 0)) }
                 if !loggedRequest, packet?.type == 0 {
                     loggedRequest = true
                     log("remote-play: LAN discovery from \(Self.text(ip)):\(UInt16(bigEndian: peer.sin_port)) forwarded to guest via \(network.text)")
                 }
             } catch { log("remote-play: \(error)") }
         }
+    }
+
+    /// Room for a new LAN peer. A full table drops its least recently active session instead
+    /// of turning new clients away (stale or spoofed peers cannot lock Remote Play out), and a
+    /// source address at its share drops its own oldest one instead of someone else's.
+    private func makeRoom(for ip: UInt32) {
+        let own = sessions.filter { $0.key.address == ip }
+        if own.count >= Self.maxSessionsPerAddress {
+            evictOldest(of: own)
+        } else if sessions.count >= Self.maxSessions {
+            evictOldest(of: sessions)
+        }
+    }
+
+    private func evictOldest(of candidates: [PeerKey: Session]) {
+        guard let oldest = candidates.min(by: { $0.value.touched < $1.value.touched })?.key else { return }
+        sessions.removeValue(forKey: oldest)?.stop()
     }
 
     private func makeSession(peer: sockaddr_in?) throws -> Session {
@@ -179,9 +319,15 @@ final class RemotePlayRelay {
         while true {
             let count = recv(session.fd, &buffer, buffer.count, 0)
             guard count >= 0 else { return }
+            health.guestPackets &+= 1
+            health.lastGuestPacket = Date()
             let isDiscovery = count >= 8 && buffer.prefix(8).elementsEqual(RemotePlayPacket.magic)
             let packet = isDiscovery ? RemotePlayPacket(Data(buffer.prefix(count))) : nil
             if isDiscovery && packet == nil { continue }
+            if packet?.type == 1 {
+                health.guestStatuses &+= 1
+                health.lastGuestStatus = Date()
+            }
             if let peer = session.peer {
                 guard let network = interfaces.first(where: {
                     peer.sin_addr.s_addr & $0.mask == $0.address & $0.mask
@@ -206,7 +352,7 @@ final class RemotePlayRelay {
     }
 
     private func sendConnected(_ data: Data, fd: Int32) {
-        data.withUnsafeBytes { bytes in _ = send(fd, bytes.baseAddress, bytes.count, 0) }
+        data.withUnsafeBytes { bytes in sent(send(fd, bytes.baseAddress, bytes.count, 0)) }
     }
 
     private func sendLAN(_ data: Data, to peer: sockaddr_in) {
@@ -217,7 +363,7 @@ final class RemotePlayRelay {
         var peer = peer
         withUnsafePointer(to: &peer) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                _ = sendto(listener, bytes, count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                sent(sendto(listener, bytes, count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)))
             }
         }
     }
@@ -261,8 +407,11 @@ final class RemotePlayRelay {
         while let pointer = current {
             let item = pointer.pointee; current = item.ifa_next
             let flags = Int32(bitPattern: item.ifa_flags)
+            // Broadcast-capable, not loopback or point-to-point: VPN tunnels (utun, ipsec, ppp)
+            // are no LAN, and the streaming forwards are bound to exactly these addresses.
             guard flags & IFF_UP != 0, flags & IFF_BROADCAST != 0,
                   flags & (IFF_LOOPBACK | IFF_POINTOPOINT) == 0,
+                  !String(cString: item.ifa_name).hasPrefix("utun"),
                   let address = item.ifa_addr, address.pointee.sa_family == AF_INET,
                   let mask = item.ifa_netmask else { continue }
             let ip = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr

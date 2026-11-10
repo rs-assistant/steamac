@@ -5,11 +5,31 @@ set -euo pipefail
 source /scripts/common.sh
 
 # Build deps from the image's own pacman.conf (public, token-free pipeline/174308 + hotfix repo).
-# --needed: never touch libraries that are already installed (they must stay identical to the image).
-pacman -Sy --noconfirm --needed \
-    meson ninja python-mako python-yaml python-packaging \
-    libdrm wayland wayland-protocols libx11 libxcb libxshmfence libxrandr libxext libxfixes libxxf86vm \
-    libglvnd xcb-proto xorgproto vulkan-headers systemd-libs zstd expat zlib
+# Only packages the image lacks are installed: `pacman -S --needed` would also upgrade listed
+# packages that are out of date in the repo, and the libraries Mesa links against must stay
+# identical to the image (= the Frame userspace), whenever the build runs.
+deps=(meson ninja python-mako python-yaml python-packaging
+      libdrm wayland wayland-protocols libx11 libxcb libxshmfence libxrandr libxext libxfixes libxxf86vm
+      libglvnd xcb-proto xorgproto vulkan-headers systemd-libs zstd expat zlib)
+linked=(glibc gcc-libs libdrm wayland libx11 libxcb libxshmfence libxext libxfixes libxxf86vm libglvnd systemd-libs zstd expat zlib)
+before=$(pacman -Q)
+mapfile -t missing < <(pacman -T "${deps[@]}" || true)
+if ((${#missing[@]})); then
+    echo "installing missing build deps: ${missing[*]}"
+    pacman -Sy --noconfirm --needed "${missing[@]}"
+fi
+changed=$(comm -23 <(sort <<<"$before") <(pacman -Q | sort))
+if [[ -n $changed ]]; then
+    for pkg in "${linked[@]}"; do
+        if grep -q "^$pkg " <<<"$changed"; then
+            echo "error: installing build deps changed image libraries Mesa links against:" >&2
+            printf '%s\n' "$changed" >&2
+            exit 1
+        fi
+    done
+    echo "warning: installing build deps changed these image packages (not linked into Mesa):" >&2
+    printf '%s\n' "$changed" >&2
+fi
 
 build_venus /tmp/build-aarch64 lib /tmp/dest-aarch64
 

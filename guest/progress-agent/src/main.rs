@@ -33,6 +33,10 @@
 //!                                 first token of the first line, printable ASCII, <= 64 chars
 //!   game-gfx <appid> dxmt|vulkan  immediately after game-proton, from that Proton's DXMT marker
 //!   profiles-ok <sha256> applied|pending  exact received JSON digest; pending needs a Steam restart
+//!                                 (a running Steam, steam.service's or Desktop Mode's, has not
+//!                                 seen this set)
+//!   profiles-error <verb>: <reason>  a `profiles` / `launch` / `restart-steam` request failed
+//!                                 (nothing applied); printable ASCII, <= 200 chars, for the log
 //!   game-exit <appid>             last Steam scope disappeared (games.rs);
 //!                                 app ids 0 and 769 are excluded from per-game statistics
 //!   cursor-ready                  port opened; host resends its cursor-track policy
@@ -42,9 +46,11 @@
 //!
 //! Host -> guest (same port): `collect-logs <id>`, served at any point of the
 //! lifecycle below (worker thread; the bundle goes out from the main loop);
-//! `freeze-game <appid>` / `thaw-game` / `still-background` (freeze.rs: pause
-//! the focused game while the launcher is in the background); `profiles <base64-json>`,
-//! `launch <appid>`, `restart-steam` (profiles.rs: serialized background worker);
+//! `compact-disk <id>` (compact.rs: root fstrim via fx-compact-disk.service so
+//! the Mac's sparse steamos.img reclaims SSD space); `freeze-game <appid>` /
+//! `thaw-game` / `still-background` (freeze.rs: pause the focused game while the
+//! launcher is in the background); `profiles <base64-json>`, `launch <appid>`,
+//! `restart-steam` (profiles.rs: serialized background worker);
 //! `keyboard-layout <index> <layout[(variant)]>...` (keyboard.rs: latest-only worker);
 //! `cursor-track 1|0` enables/disables cursor X work (default off); enable also
 //! resynchronizes the full snapshot after the host/agent connection restarts.
@@ -103,6 +109,7 @@ mod clipx11;
 mod appname;
 mod codec;
 mod collect;
+mod compact;
 mod cursor;
 mod focus;
 mod pad;
@@ -326,9 +333,36 @@ fn ready_marker() -> String {
     format!("/tmp/.fx-progress-ready-{}", unsafe { libc::getuid() })
 }
 
+/// A per-boot marker in /tmp, only if it is a regular file this user owns: another local user
+/// could otherwise plant one first (and silence `ready`) or point a symlink at it.
+pub(crate) fn read_marker(path: impl AsRef<std::path::Path>) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let path = path.as_ref();
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() || meta.uid() != unsafe { libc::getuid() } {
+        eprintln!("fx-progress: ignoring {}: not a regular file owned by this user", path.display());
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// Write a /tmp marker without following a symlink at its name; mode 0600.
+pub(crate) fn write_marker(path: impl AsRef<std::path::Path>, text: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = path.as_ref();
+    let result = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW).open(path)
+        .and_then(|mut f| f.write_all(text.as_bytes()));
+    if let Err(e) = result {
+        eprintln!("fx-progress: write {}: {e}", path.display());
+    }
+}
+
 /// Host -> guest requests on the port: `<command> [args]`, one per line,
 /// never blocking (each handler only starts work or answers right away).
-fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut freeze::Freezer, focus: &focus::Focus, profiles: &profiles::Requests, cursor: &mut cursor::Cursor) {
+fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut freeze::Freezer, focus: &focus::Focus,
+              profiles: &profiles::Requests, compact: &compact::Compact, cursor: &mut cursor::Cursor, games: &games::Games) {
     for line in port.read_lines() {
         let line = line.trim();
         if let Some(enabled) = port::cursor_tracking(line) {
@@ -339,7 +373,8 @@ fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut
         }
         let (cmd, arg) = line.split_once(' ').map_or((line, ""), |(c, a)| (c, a.trim()));
         match cmd {
-            "collect-logs" => collector.request(arg, port),
+            "collect-logs" => collector.request(arg, port, games.diagnostic_appid()),
+            "compact-disk" => compact.request(arg),
             "profiles" | "launch" | "restart-steam" => profiles.request(cmd, arg),
             "freeze-game" => match arg.parse::<u32>() {
                 // Only the game that has the focus (the host may be a step behind).
@@ -357,6 +392,7 @@ fn serve_host(port: &mut Port, collector: &mut collect::Collector, freezer: &mut
     freezer.pump(focus.game());
     freezer.send_replies(port);
     profiles.pump(port);
+    compact.pump(port);
 }
 
 /// Boot progress until `ready` (or give-up / SIGTERM); focus changes are
@@ -370,6 +406,7 @@ fn report_boot(
     games: &mut games::Games,
     names: &mut appname::Names,
     profiles: &profiles::Requests,
+    compact: &compact::Compact,
     cursor: &mut cursor::Cursor,
 ) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/steamos".into());
@@ -413,7 +450,7 @@ fn report_boot(
                         rep.stage(Stage::Start, 100, "Steam is ready");
                         rep.port.send("ready");
                         eprintln!("fx-progress: ready: Steam UI {}", ui.on_screen_window());
-                        let _ = std::fs::write(ready_marker(), boot_id());
+                        write_marker(ready_marker(), &boot_id());
                         return;
                     }
                 }
@@ -427,7 +464,7 @@ fn report_boot(
             }
         }
         rep.port.flush();
-        serve_host(&mut rep.port, collector, freezer, focus, profiles, cursor);
+        serve_host(&mut rep.port, collector, freezer, focus, profiles, compact, cursor, games);
         collector.pump(&mut rep.port);
         focus.pump(&mut rep.port, false, names);
         cursor.pump(&mut rep.port);
@@ -487,10 +524,11 @@ fn main() {
     let mut games = games::Games::new();
     let mut cursor_state = cursor::Cursor::new();
     let profiles = profiles::Requests::new();
+    let compact = compact::Compact::new();
     let mut names = appname::Names::new(appname::steam_root(),
         format!("/tmp/.fx-progress-named-{}", unsafe { libc::getuid() }).into());
     let force = std::env::var("FX_PROGRESS_FORCE").map_or(false, |v| v == "1");
-    let already = !force && std::fs::read_to_string(ready_marker()).map_or(false, |s| s.trim() == boot_id());
+    let already = !force && read_marker(ready_marker()).map_or(false, |s| s.trim() == boot_id());
     let mut desktop_ready_pending = false;
     if already {
         eprintln!("fx-progress: ready already reported this boot; reporting focus/shutdown only");
@@ -500,7 +538,7 @@ fn main() {
         rep.stage(Stage::Session, 100, "Session started");
         desktop_ready_pending = true;
     } else {
-        report_boot(&mut rep, &mut focus, heartbeat.as_ref(), &mut collector, &mut freezer, &mut games, &mut names, &profiles, &mut cursor_state);
+        report_boot(&mut rep, &mut focus, heartbeat.as_ref(), &mut collector, &mut freezer, &mut games, &mut names, &profiles, &compact, &mut cursor_state);
     }
     // Once after `ready` (or at agent start on a later session): current focus.
     focus.pump(&mut rep.port, true, &mut names);
@@ -522,7 +560,7 @@ fn main() {
         let mut pfds = Vec::with_capacity(8);
         while !terminated() {
             rep.port.flush();
-            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &mut cursor_state);
+            serve_host(&mut rep.port, &mut collector, &mut freezer, &focus, &profiles, &compact, &mut cursor_state, &games);
             collector.pump(&mut rep.port);
             focus.pump(&mut rep.port, false, &mut names);
             cursor_state.pump(&mut rep.port);
@@ -530,7 +568,7 @@ fn main() {
                 desktop_ready_pending = false;
                 rep.port.send("ready");
                 eprintln!("fx-progress: ready: desktop on screen");
-                let _ = std::fs::write(ready_marker(), boot_id());
+                write_marker(ready_marker(), &boot_id());
             }
             if let Some(hb) = heartbeat.as_ref() {
                 if hb.pump(&mut rep.port) {
@@ -544,6 +582,7 @@ fn main() {
                 libc::pollfd { fd: rep.port.read_fd().unwrap_or(-1), events: libc::POLLIN, revents: 0 },
                 libc::pollfd { fd: collector.wake_fd(), events: libc::POLLIN, revents: 0 },
                 libc::pollfd { fd: profiles.wake_fd(), events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: compact.wake_fd(), events: libc::POLLIN, revents: 0 },
             ]);
             cursor_state.poll_fds(&mut pfds);
             let mut wait_ms: i64 = if focus.connected() { -1 } else { 1000 };
@@ -596,4 +635,30 @@ fn main() {
         rep.port.flush();
     }
     // Port is closed on drop.
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::{read_marker, write_marker};
+
+    #[test]
+    fn markers_round_trip_and_never_follow_symlinks() {
+        let dir = std::env::temp_dir().join(format!("fx-marker-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let marker = dir.join("ready");
+        write_marker(&marker, "boot-1");
+        assert_eq!(read_marker(&marker).as_deref(), Some("boot-1"));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&marker).unwrap().permissions().mode() & 0o777, 0o600);
+
+        let target = dir.join("target");
+        std::fs::write(&target, "untouched").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        write_marker(&link, "boot-2");   // O_NOFOLLOW: refused, target unchanged
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(read_marker(&link), None);   // a symlink is not a marker
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

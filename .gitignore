@@ -2,3 +2,7 @@
 .DS_Store
 /host/launcher/.build/
 /host/launcher/Sources/CZstd/zstd/
+/host/launcher/Sources/CEnet/enet/
+/host/launcher/Sources/CEnet/include/enet/
+/host/launcher/Sources/CNanors/nanors/
+/host/launcher/Sources/CZstd/.zstd.*

@@ -49,6 +49,24 @@ TITLES = {
 
 VDF_PATH = ("UserLocalConfigStore", "Software", "Valve", "Steam", "apps")
 
+# Profile env words: the launcher's and the stats service's allowlist (GameProfiles.validEnv,
+# services/game-stats profileEnv) and fx-progress-agent's profiles.rs, at most ENV_MAX characters
+# of words separated by single spaces. ENV_DENIED (also in profiles.rs) are names inside those
+# prefixes that choose which code or files get loaded rather than tune a driver: Vulkan loader
+# driver/layer selection, DXVK's config file, Mesa's driver override and Proton's log directory.
+# The WINE* names lack the "_" and fail the allowlist anyway; they stay listed so a wider prefix
+# rule never lets them through.
+ENV_WORD = re.compile(r"(?:VKD3D|DXVK|PROTON|WINE|MESA|RADV|VK|DXMT|MTL|STEAMAC)_[A-Z0-9_]*=[A-Za-z0-9_.,:;+-]*")
+ENV_MAX = 256
+ENV_DENIED = frozenset((
+    "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES",
+    "VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
+    "VK_INSTANCE_LAYERS", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE",
+    "VK_LOADER_DRIVERS_SELECT", "VK_LOADER_DRIVERS_DISABLE",
+    "DXVK_CONFIG_FILE", "MESA_LOADER_DRIVER_OVERRIDE", "PROTON_LOG_DIR",
+    "WINEDLLPATH", "WINEPREFIX", "WINESERVER", "WINELOADER",
+))
+
 
 def atomic_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,13 +238,23 @@ def profile_titles():
     profiles = json.loads(path.read_text())
     result = {}
     for appid, profile in profiles["games"].items():
+        # The app id becomes a VDF key path: ASCII digits only (str.isdecimal takes any script's).
+        if not re.fullmatch(r"[0-9]{1,10}", appid) or int(appid) > 0xFFFFFFFF:
+            raise ValueError("invalid profile app id")
+        if not isinstance(profile, dict):
+            raise ValueError("invalid profile for " + appid)
         if "env" not in profile:
             continue
+        env = profile["env"]
+        if not isinstance(env, str) or len(env) > ENV_MAX:
+            raise ValueError("invalid profile environment for " + appid)
         words = []
-        for word in profile["env"].split():
+        for word in env.split(" ") if env else ():
+            if not ENV_WORD.fullmatch(word):
+                raise ValueError("invalid profile environment word for " + appid)
             name, value = word.split("=", 1)
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-                raise ValueError("invalid profile environment name")
+            if name in ENV_DENIED:
+                raise ValueError("denied profile environment name " + name + " for " + appid)
             # Values are data, not shell code (including telemetry's allowed ';').
             words.append(name + "=" + (shlex.quote(value) if value else ""))
         result[appid] = (tuple(words), ())

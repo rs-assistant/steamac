@@ -90,6 +90,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// `pixelScale`.
     var onGuestSizeRequest: ((Int, Int) -> Void)?
     private var requestedGuestSize: (Int, Int)
+    private var preStreamGuestSize: (Int, Int)
     private var guestResizeWork: DispatchWorkItem?
     private var inFullScreenTransition = false
     static let minGuestSize = NSSize(width: 800, height: 500)
@@ -109,6 +110,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         let guest = WindowController.guestSize(points: CGSize(width: width, height: height), scale: pixelScale)
         self.scanoutSize = guest
         self.requestedGuestSize = guest
+        self.preStreamGuestSize = guest
         let rect = NSRect(x: 0, y: 0, width: width, height: height)
         let screen = WindowController.targetScreen()
         window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -168,8 +170,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             if self.captured && self.mouseMode == .auto && !self.clickCaptures { self.releasePointer() }
             self.updateTitle()
         })
-        // Metal Performance HUD (libMTLHud, loaded by MTL_HUD_ENABLED=1, see main.swift), shown and
-        // hidden at runtime through the layer (VMView.metalHUD).
+        // Only injected when enabled at boot; hiding an injected HUD cannot unload its handlers.
         applyMetalHUD(settings.metalHUD)
         subscriptions.append(settings.$metalHUD.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in
             self?.applyMetalHUD(on)
@@ -237,7 +238,35 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Set while the VM is paused (suspended, guest asleep): window size changes (leaving full
     /// screen before the window hides, resizes while it sleeps) do not resize the guest until it
     /// runs again.
-    var holdGuestSize = false { didSet { if oldValue && !holdGuestSize { scheduleGuestResize() } } }
+    var holdGuestSize = false {
+        didSet {
+            if oldValue && !holdGuestSize {
+                if restoreStreamDisplay { endStreamDisplay() } else { scheduleGuestResize() }
+            }
+        }
+    }
+    /// Separate from the suspend hold: ending a stream must not release a paused VM's hold.
+    private var streamHoldsGuestSize = false
+    private var restoreStreamDisplay = false
+
+    func beginStreamDisplay(width: Int, height: Int) {
+        if !streamHoldsGuestSize && !restoreStreamDisplay { preStreamGuestSize = requestedGuestSize }
+        streamHoldsGuestSize = true
+        restoreStreamDisplay = false
+        guestResizeWork?.cancel()
+        requestedGuestSize = (width, height)
+        onGuestSizeRequest?(width, height)
+    }
+
+    func endStreamDisplay() {
+        guard streamHoldsGuestSize || restoreStreamDisplay else { return }
+        streamHoldsGuestSize = false
+        restoreStreamDisplay = holdGuestSize
+        guard !holdGuestSize else { return }
+        let size = settings.followWindowSize ? guestSizeForWindow() : preStreamGuestSize
+        requestedGuestSize = size
+        onGuestSizeRequest?(size.0, size.1)
+    }
     /// One-shot: the window has left full screen.
     var onDidExitFullScreen: (() -> Void)?
 
@@ -247,7 +276,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         guestResizeWork?.cancel()
         guard settings.followWindowSize else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.window.inLiveResize, !self.inFullScreenTransition, !self.holdGuestSize else { return }
+            guard let self, !self.window.inLiveResize, !self.inFullScreenTransition,
+                  !self.holdGuestSize, !self.streamHoldsGuestSize else { return }
             let size = self.guestSizeForWindow()
             guard size != self.requestedGuestSize else { return }
             self.requestedGuestSize = size
@@ -476,12 +506,21 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     /// Menu "Show Metal Performance HUD" / Ctrl+Cmd+P: flips the setting (persisted, Settings > Display).
     func toggleMetalHUD() {
-        settings.metalHUD.toggle()
+        // Both callers are AppKit's main-thread menu/event dispatch, even though this
+        // controller predates actor annotations.
+        MainActor.assumeIsolated {
+            guard settings.metalHUD || MetalHUD.confirmEnable(current: settings.metalHUD, nextDriver: settings.vulkanDriver) else { return }
+            settings.metalHUD.toggle()
+        }
     }
 
     private func applyMetalHUD(_ on: Bool) {
-        view.metalHUD = on
-        log("display: Metal Performance HUD \(on ? "on" : "off")")
+        let shown = MetalHUD.visible(requested: on)
+        view.metalHUD = shown
+        CrashReporting.metalHUDChanged()
+        log("display: Metal Performance HUD \(shown ? "on" : "off") (library \(MetalHUD.loaded ? "loaded" : "not loaded"))")
+        if on && MetalHUD.driver == .kosmickrisp { log("display: \(MetalHUD.kosmicKrispNote)") }
+        if on && !shown { log("display: enabling the Metal Performance HUD requires a VM restart") }
         view.redraw()   // the HUD changes with the next present; an idle guest sends none
     }
 
@@ -994,13 +1033,13 @@ extension WindowController {
         let now = Date()
         if guestCursor == nil || now.timeIntervalSince(lastPointerMotion) > WindowController.reanchorAfterIdle {
             let (sw, sh) = pointerMap.surface
-            let far = -Int32(4 * (max(sw, scanoutSize.0) + max(sh, scanoutSize.1)))
+            let far = -Int32(clamping: 4 * (max(sw, scanoutSize.0) + max(sh, scanoutSize.1)))
             inputs.mouse.send([(EV.REL, REL.X, far), (EV.REL, REL.Y, far)])
             guestCursor = (0, 0)
         }
         lastPointerMotion = now
         let (cx, cy) = guestCursor!
-        let dx = Int32(target.0 - cx), dy = Int32(target.1 - cy)
+        let dx = Int32(clamping: target.0 - cx), dy = Int32(clamping: target.1 - cy)
         guard dx != 0 || dy != 0 else { return }
         var ev: [(UInt16, UInt16, Int32)] = []
         if dx != 0 { ev.append((EV.REL, REL.X, dx)) }

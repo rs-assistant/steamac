@@ -32,6 +32,8 @@ final class StallMonitor {
         let idle: TimeInterval
         let heartbeatAge: TimeInterval
         let history: String
+        let memoryHistory: String
+        let threadSnapshot: String
     }
 
     private struct Reading {
@@ -44,6 +46,9 @@ final class StallMonitor {
         let pollGap: TimeInterval
         let game: Bool
         let gate: Bool
+        let hostActive: Bool
+        let hostKey: Bool
+        let hostWindow: String
     }
     // Independent of Settings > Performance statistics: reports otherwise had only the first
     // 2 s of GPU idleness and could not distinguish agent loss, host scheduling and GPU stalls.
@@ -207,9 +212,9 @@ final class StallMonitor {
             notRespondingReported = true
             log("stall: guest not responding (no heartbeat for \(Int(heartbeatAge ?? 0)) s, gpu idle \(Int(now - lastActivity)) s)")
             onNotResponding?(Diagnostic(idle: now - lastActivity, heartbeatAge: heartbeatAge ?? 0,
-                                       history: diagnosticHistory(now: now) + "\n"
-                                           + VMMemoryDiagnostics.shared.history() + "\n"
-                                           + StallThreadDiagnostics.snapshot()))
+                                       history: diagnosticHistory(now: now),
+                                       memoryHistory: VMMemoryDiagnostics.shared.history(),
+                                       threadSnapshot: StallThreadDiagnostics.snapshot()))
         }
         if !longStallLogged && now - max(lastActivity, gateOpenedAt) >= 10 {
             longStallLogged = true
@@ -307,9 +312,23 @@ final class StallMonitor {
         lastPoll = now
         guard now - lastReading >= 1 else { return }
         lastReading = now
+        // Guest game focus is not host application focus (STEAMAC-8N/8P).
+        // Keep presentation state in the same bounded timeline as GPU activity:
+        // otherwise a later foreground report cannot establish when occlusion began.
+        let window = view.window
+        let windowState: String
+        if let window {
+            windowState = window.isMiniaturized ? "miniaturized"
+                : !window.isVisible ? "hidden"
+                : window.occlusionState.contains(.visible) ? "visible" : "occluded"
+        } else {
+            windowState = "detached"
+        }
         let reading = Reading(at: now, counters: counters, heartbeatAge: heartbeatAge,
                               uptimeMs: guestUptimeMs, load: guestLoad, cpu: Self.cpuSeconds(),
-                              pollGap: gap, game: gameFocused, gate: gateOpen)
+                              pollGap: gap, game: gameFocused, gate: gateOpen,
+                              hostActive: NSApp.isActive, hostKey: window?.isKeyWindow ?? false,
+                              hostWindow: windowState)
         if readings.count < 32 {
             readings.append(reading)
         } else {
@@ -319,15 +338,22 @@ final class StallMonitor {
         CrashReporting.updateGPUHistory(diagnosticHistory(now: now) + "\n" + VMMemoryDiagnostics.shared.history())
     }
 
+    // Unlabelled neighbouring counters can resemble a payment-card number to
+    // Sentry's scrubber (1.9.9 events 3859f512 / 4b047457, STEAMAC-8).
+    static func diagnosticCounterText(_ counters: Counters?) -> String {
+        counters.map { "ctrl=\($0.ctrl) ring=\($0.ring)" } ?? "ctrl=unavailable ring=unavailable"
+    }
+
     private func diagnosticHistory(now: CFTimeInterval) -> String {
-        var lines = ["seconds-ago ctrl-total ring-total heartbeat-age guest-uptime-ms load cpu-total poll-gap game gate"]
+        var lines = ["GPU activity samples (ago seconds; counters cumulative; CPU cumulative seconds)"]
         for offset in 0..<readings.count {
             let r = readings[(readings.count == 32 ? nextReading + offset : offset) % 32]
-            let counters = r.counters.map { "\($0.ctrl) \($0.ring)" } ?? "unavailable unavailable"
             let heartbeat = r.heartbeatAge.map { String(format: "%.2f", $0) } ?? "none"
-            lines.append(String(format: "%.2f", now - r.at) + " \(counters) \(heartbeat) \(r.uptimeMs)"
-                         + String(format: " %.2f %.2f %.2f", r.load, r.cpu, r.pollGap)
-                         + " \(r.game) \(r.gate)")
+            lines.append(String(format: "ago=%.2f ", now - r.at) + Self.diagnosticCounterText(r.counters)
+                         + " hb=\(heartbeat) up=\(r.uptimeMs)"
+                         + String(format: " load=%.2f cpu=%.2f gap=%.2f", r.load, r.cpu, r.pollGap)
+                         + " game=\(r.game) gate=\(r.gate)"
+                         + " host-active=\(r.hostActive) host-key=\(r.hostKey) window=\(r.hostWindow)")
         }
         return lines.joined(separator: "\n")
     }

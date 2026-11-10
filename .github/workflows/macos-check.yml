@@ -1,0 +1,96 @@
+# Compile checks on a GitHub-hosted Apple silicon Mac. The runner is itself a VM without nested
+# virtualization, so SteamOS cannot boot here; this checks what can be checked without it:
+# the launcher's Swift sources compile against the patched libkrun headers, the string catalog
+# is complete, and the Go tools build from source and run on darwin/arm64.
+name: macOS checks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/inspiring-ramanujan-ikc8xj]
+    paths:
+      - host/launcher/**
+      - host/libkrun/**
+      - .github/workflows/macos-check.yml
+  pull_request:
+    paths:
+      - host/launcher/**
+      - host/libkrun/**
+      - .github/workflows/macos-check.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  launcher:
+    runs-on: macos-26   # macos-15 arm64 jobs were repeatedly not acquired (capacity)
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd   # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          ls -d /Applications/Xcode*.app
+          # Newest installed Xcode (the launcher targets the macOS 15 SDK or later).
+          xcode=$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)   # newest release Xcode 26
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          swift --version
+          # README requirement (Homebrew go); build-go-tool.sh then fetches its pinned toolchain.
+          command -v go >/dev/null || brew install go
+          go version
+
+      - name: libkrun headers (pinned tag + host/libkrun/patches)
+        run: |
+          set -euo pipefail
+          eval "$(grep -E '^(REPO|TAG|COMMIT)=' host/libkrun/build.sh)"
+          src=$RUNNER_TEMP/libkrun
+          git init -q "$src"
+          git -C "$src" remote add origin "$REPO"
+          git -C "$src" fetch -q --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          test "$(git -C "$src" rev-parse "$TAG^{commit}")" = "$COMMIT"
+          git -C "$src" checkout -q --detach "$COMMIT"
+          for p in "$PWD"/host/libkrun/patches/*.patch; do git -C "$src" apply "$p"; done
+          mkdir -p "$RUNNER_TEMP/krun/include"
+          cp "$src"/include/libkrun.h "$src"/include/libkrun_display.h "$src"/include/libkrun_input.h "$RUNNER_TEMP/krun/include/"
+
+      - name: Pinned C sources (zstd, ENet, nanors)
+        run: |
+          host/launcher/fetch-zstd.sh
+          host/launcher/fetch-enet.sh
+          host/launcher/fetch-nanors.sh
+
+      - name: Compile the launcher (no link; libkrun itself is not built here)
+        run: |
+          set -euo pipefail
+          swift build -c release --package-path host/launcher --scratch-path host/launcher/.build \
+            --target steamac-vm \
+            -Xcc "-I$RUNNER_TEMP/krun/include" \
+            -Xswiftc -emit-localized-strings -Xswiftc -emit-localized-strings-path \
+            -Xswiftc "$PWD/host/launcher/.build/stringsdata"
+
+      - name: String catalog
+        run: |
+          set -euo pipefail
+          python3 host/launcher/l10n.py sync host/launcher/.build/stringsdata
+          python3 host/launcher/l10n.py check --strict
+          git diff --stat -- host/launcher/Localizable.xcstrings
+
+      - name: gvproxy and desync from source
+        run: |
+          set -euo pipefail
+          host/launcher/fetch-gvproxy.sh
+          host/launcher/fetch-desync.sh
+          # second run: skipped after the sha256 check
+          host/launcher/fetch-gvproxy.sh
+          host/launcher/fetch-desync.sh
+          file work/out/host/bin/gvproxy work/out/host/bin/desync
+          cat work/out/host/bin/*.source
+          go version -m work/out/host/bin/gvproxy | head -3

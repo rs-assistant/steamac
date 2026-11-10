@@ -179,7 +179,13 @@ struct GPT: Equatable {
                 if u == 0 { break }
                 units.append(u)
             }
-            g.entries.append(Entry(type: type, uuid: getGUID(a, o + 16), firstLBA: get64(a, o + 32), lastLBA: get64(a, o + 40),
+            let first = get64(a, o + 32), last = get64(a, o + 40)
+            // The guest writes this disk and the CRCs only prove self-consistency: an entry must
+            // lie inside the usable range (no sector arithmetic on it can then overflow).
+            guard g.firstUsableLBA <= first, first <= last, last <= g.lastUsableLBA else {
+                throw OptionError("GPT entry \(i + 1): LBAs \(first)-\(last) outside \(g.firstUsableLBA)-\(g.lastUsableLBA)")
+            }
+            g.entries.append(Entry(type: type, uuid: getGUID(a, o + 16), firstLBA: first, lastLBA: last,
                                    attributes: get64(a, o + 48), name: String(decoding: units, as: UTF16.self)))
         }
         return g

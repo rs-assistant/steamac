@@ -2,6 +2,8 @@
 
 **English** · [Русский](README.ru.md) · [简体中文](README.zh.md)
 
+This fork (rs-assistant/steamac): build and install steps, and what it changes — [FORK.md](FORK.md) (繁體中文).
+
 On macOS 15 (Sequoia), Valve's actual SteamOS for Steam Frame runs in a lightweight VM on
 Hypervisor.framework (libkrun) with GPU acceleration via Venus.
 
@@ -22,7 +24,7 @@ Metal 4) is an experimental alternative on macOS 26+ (see “Vulkan driver”).
 - KosmicKrisp (optional, alternative Vulkan driver): built only on macOS 26+; `host/kosmickrisp/build.sh`
   installs its Homebrew dependencies (`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`).
 - OrbStack (or Docker with arm64 and `--privileged`): the kernel, Mesa, and disk image are built in Linux containers.
-- Homebrew packages: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: license inventory of the bundled gvproxy/desync).
+- Homebrew packages: `meson ninja pkg-config dtc xz lld sshpass go` (`go`: builds the bundled gvproxy/desync from source with a pinned Go toolchain, `host/launcher/build-go-tool.sh`, and their license inventory).
 - libepoxy 1.5.10 is built from pinned sources by `host/libepoxy/build.sh`, before virglrenderer and
   libkrun; all three use `MACOSX_DEPLOYMENT_TARGET=15.0`, including on macOS 26/27 build hosts.
   Bundling rejects Mach-O deployment targets above macOS 15.0 (KosmicKrisp alone may require 26.0).
@@ -172,7 +174,7 @@ start over.
 |---|---|
 | Ctrl+Cmd+F | full screen (macOS turns on Game Mode: Info.plist declares a game — `LSApplicationCategoryType` `public.app-category.games`, `GCSupportsGameMode`, `LSSupportsGameMode`; `gamepolicyd` logs “Game mode status is now on”) |
 | Ctrl+Cmd+G | manually capture / release the mouse |
-| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display |
+| Ctrl+Cmd+P | toggle Apple's Metal Performance HUD (FPS, frame interval, GPU time, memory); also View → Show Metal Performance HUD and Settings > Display. The HUD library is loaded only if the HUD is on when the VM boots: turning it on takes effect after a restart, turning it off hides it at once and unloads it at the next restart. Apple's HUD has crashed the VM with KosmicKrisp (Metal 4) on macOS 26, even with the overlay hidden (STEAMAC-59/7K/7Q/9X/9Y), so turning it on with KosmicKrisp asks for confirmation; as an alternative without Apple's HUD, Settings > General > Log frame-pacing statistics records guest display timing (not game FPS). Crash reports carry the requested and effective HUD state, whether its library was injected, and the driver |
 | Ctrl+Option | release the captured mouse |
 | close window | shut down the guest (power button) |
 
@@ -206,7 +208,8 @@ Guest access: `ssh -p 2222 steamos@127.0.0.1`, password `steamos` (change via
 
 SSH is toggled with one switch: **Settings → Advanced → Enable SSH** (or `--ssh-port N` /
 `--no-ssh`). On each boot the launcher passes `steamac.ssh=0|1`: with 0, the Mac port is not opened
-at all (gvproxy without forwarding), and initramfs masks sshd in SteamOS. By default SSH is enabled
+at all (gvproxy without forwarding), and initramfs masks sshd in SteamOS;
+without the parameter (or with an invalid value) initramfs keeps SSH off as well. By default SSH is enabled
 in the dev launcher (`work/out/steamac-vm`, `./run.sh`, port 2222) and disabled in
 `FX Steam Launcher.app` (the `SteamacReleaseDefaults` key in Info.plist, set by `bundle.sh`). When
 enabled, the launcher generates a password for user `steamos` (20 characters, SecRandomCopyBytes),
@@ -224,14 +227,19 @@ status.
 Ordinary networking uses gvproxy user-mode NAT (`192.168.127.2` in SteamOS); LAN broadcasts
 do not cross that NAT. **Settings → Advanced → LAN Remote Play** (next start), or
 `--lan-remote-play`, enables a launcher-side discovery relay and same-port forwards:
-UDP **27031–27036**, TCP **27036–27037**, from the Mac to the guest. It is **off by default**:
+UDP **27031–27036**, TCP **27036–27037**, from the Mac to the guest. The forwards listen on the
+Mac's LAN (broadcast-capable IPv4) addresses only, not on loopback or VPN tunnels, and follow
+address changes while the VM runs. It is **off by default**:
 enabling it exposes Steam's Remote Play services to other machines, independently of SSH.
 `--no-lan-remote-play` disables it for one boot; Network off disables it too.
 
 Allow macOS's **Local Network** permission and incoming traffic in the Mac/SteamOS firewall.
 Steam Link and the Mac must be on the **same IPv4 subnet** (Wi-Fi client isolation, guest
 networks, VLANs, routed discovery and IPv6-only LANs are not supported). Enable Remote Play
-in guest Steam; use the Mac's LAN address for manual pairing, not `192.168.127.2`.
+in guest Steam; use the Mac's LAN address for manual pairing, not `192.168.127.2`. Steam Link cannot
+wake a sleeping SteamOS: wake it from the Mac window, Dock icon or a controller before reconnecting.
+Reports with launcher logs include the relay's state and counters, gvproxy's live forwards and log, and
+the guest's addresses, routes and listening sockets (STEAMAC-9G).
 Quit the Mac's own Steam client if it owns these ports: the launcher never shares or steals
 UDP 27036, logs conflicts as `remote-play: disabled for this boot`, and rolls back its forwards.
 The Mac Steam client's own UDP 27036 broadcasts are not relayed back into the guest.
@@ -249,6 +257,40 @@ no host answers; it does not claim pairing or streaming success.
 Protocol references: [Valve's Remote Play network settings](https://help.steampowered.com/en/faqs/view/3E3D-BE6B-787D-A5D2),
 [Steam remote-client protobufs](https://github.com/SteamDatabase/Protobufs/blob/master/steam/steammessages_remoteclient_discovery.proto),
 and [discovery envelope framing](https://github.com/OpenSourceLAN/steam-discover/blob/master/listener.js).
+
+## Streaming with Moonlight
+
+**Settings → Streaming → Enable Moonlight streaming** turns on the built-in GameStream host
+immediately; it is **off by default** and available only in the windowed VM process. Install
+[Moonlight](https://moonlight-stream.org/) on another device on your trusted local network,
+allow macOS **Local Network** access and incoming connections, and select this Mac in Moonlight
+(or add the Mac's LAN address manually). Enter the four-digit PIN shown on that device in the
+pairing window on the Mac, then launch **SteamOS** in Moonlight.
+
+The Streaming tab shows host/session status and paired devices with their pairing dates.
+**Revoke** removes a device's access and ends its current stream; it must pair again.
+**End stream** disconnects the current session without revoking it. Disabling streaming closes
+the listeners and ends the session. VM suspension or SteamOS sleep also stops streaming and
+closes the listeners; they return after resume if the setting is still enabled.
+While a client streams, the launcher's background-game-pause preference does not freeze the game.
+
+The Mac listens on TCP **47984, 47989** while enabled and TCP **48010** / UDP
+**47998–48000** for a session; Bonjour discovery uses **_nvstream._tcp**. Do not expose these
+ports to the public Internet. This is independent of **Advanced → LAN Remote Play** and does
+not require Steam Link, guest Steam Remote Play, or a virtual display.
+
+The stream contains the guest display, including the visible DXMT game layer, and guest playback
+audio—not the Mac desktop, launcher overlays, or microphone. H.264 / supported hardware HEVC
+and Opus are used without Screen Recording permission or an audio loopback driver. Moonlight's
+requested resolution temporarily owns the guest display (even sizes within the VM's maximum);
+ending the stream restores the window's size, or the previous guest resolution if “Guest display
+follows the window size” is off. One client streams at a time. Keyboard, mouse,
+touch-as-mouse and controllers control the same running guest; local and remote inputs share it.
+Moonlight controllers take the first SteamOS player slots ahead of Mac controllers during the
+session; with **Additional controllers** off, a Mac controller waits until the stream ends.
+The Mac controllers return to their usual slots afterwards.
+No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
+`--selftest-stream` runs the component protocol/media checks without booting a VM.
 
 ## Settings window
 
@@ -268,7 +310,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Games | **Share game statistics** (off until you agree, see “Game statistics”); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
-| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”) |
+| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-library`, `--no-share-library`, see “Shared folder”) |
 
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
@@ -298,9 +340,19 @@ only as SteamOS writes; exFAT allocates the full added capacity immediately, so 
 free space first. Terminal, with SteamOS stopped:
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`.
 
+**Reclaim space on the Mac:** after uninstalling games (or after a large Grow), the sparse
+`steamos.img` can stay large on disk even though SteamOS no longer needs those blocks.
+**Settings → Advanced → Reclaim Disk Space…** (SteamOS running) asks the guest to `fstrim`
+`/home` (and `/var` when mounted); virtio-blk DISCARD punches holes in the Mac image. Capacity
+is unchanged — allocated size can drop **only when the image is on APFS**. HFS+ and exFAT cannot
+reclaim space this way; the launcher checks the volume before starting. APFS clones and snapshots
+may retain the freed blocks, so the Mac's free space need not increase by the same amount.
+This is not a GPT/home shrink (that remains grow-only).
+
 For tests: `STEAMAC_DEFAULTS_DOMAIN=<domain>` substitutes the settings domain; `--selftest-settings
 --selftest-out DIR` opens the window without a VM and writes a PNG of each tab; `--control-fifo` has
 `settings TAB`, `settings-dump PNG`, `set KEY VALUE` (as from the window), `restart`.
+`--control-fifo` is a development hook: the release app (`SteamacReleaseDefaults`) ignores it.
 
 ### Per-game profiles
 
@@ -311,7 +363,10 @@ KosmicKrisp / MoltenVK (only available drivers are offered); **Launch options** 
 limited to 256 characters. Names use the prefixes `VKD3D_`, `DXVK_`, `PROTON_`, `WINE_`, `MESA_`,
 `RADV_`, `VK_`, `DXMT_`, `MTL_`, `STEAMAC_`, followed by zero or more `[A-Z0-9_]` characters;
 values match `[A-Za-z0-9_.,:;+-]*` (empty is allowed). Assignments are sorted by name; the last
-duplicate name wins. Invalid input stays visible with an error and is not saved or sent.
+duplicate name wins. Invalid input stays visible with an error and is not saved or sent. An empty field
+means the profile adds no overrides (the field no longer shows a `VKD3D_CONFIG=dxr` example that looked
+like a forced value, STEAMAC-8X). The Metal Performance HUD shows the Mac's drawable size, which can
+differ from the game's rendering resolution.
 
 **Recommended: … — Apply** fetches a profile from the statistics service using this Mac's **My Mac**
 limits (GPU cores, RAM and performance cores no greater than this Mac's). Configurations are ranked
@@ -460,7 +515,10 @@ items are skipped with a log line). Items that password managers mark as conceal
 (`org.nspasteboard.ConcealedType` / `TransientType`) stay on the Mac unless **Include concealed
 (password manager) items** is on. The launcher checks the pasteboard's `changeCount` on a 0.5 s
 timer only while the app is active and the VM runs, and once on every activation — never in the
-background, while suspended or asleep; images from SteamOS land on the Mac as PNG + TIFF.
+background, while suspended or asleep; images from SteamOS land on the Mac as PNG + TIFF. SteamOS
+can replace the Mac clipboard only while the app is active: a copy made in SteamOS while the app is
+in the background (or the VM is paused) is held and applied on the next activation, unless the
+Mac's clipboard changed in the meantime (then the newer Mac copy wins and goes to SteamOS).
 
 Transport: the virtio-console port `fx.clipboard`, framed binary messages (`HELLO` / `STATE` /
 `SET` with sequence numbers / `ACK`; `host/launcher/Sources/steamac-vm/Clipboard.swift`,
@@ -477,6 +535,72 @@ gamescope, KWin or Klipper re-announce it. The selection present when a display 
 Klipper's restored history) is not sent to the Mac; the shared content is offered there instead.
 `--control-fifo` has `chord KEYCODE ctrl` (e.g. `chord 9 ctrl` = Ctrl+V in the guest) and
 `set shareClipboard on|off`.
+
+## Shared folder
+
+**Settings → Advanced → Shared folder** (next start) exposes one Mac folder to SteamOS as a
+virtio-fs device tagged `macshare`, mounted at **Mount point in SteamOS** (default
+`/home/steamos/MacShare`) on every boot. Files are read and written in place, nothing is copied:
+games stored on the Mac load at the Mac disk's speed, and what SteamOS writes there is on the Mac
+at once. Off by default (no folder chosen). Command line: `--share DIR`, `--share-mount PATH`,
+`--no-share` for one launch.
+
+**Use as a Steam library** is on by default when a folder is shared (next start).
+SteamOS creates **`<mount>/SteamLibrary/steamapps`** and registers `<mount>/SteamLibrary`
+before Steam starts; no Desktop Mode “Add Drive” dialog is needed. In Steam's Storage settings
+and install-location picker it is a second library named **Mac Share**, not a Deck-style
+removable drive to format. `--share-library` / `--no-share-library` overrides this for one launch;
+turning it off does not delete files or remove an already registered library.
+
+Registration is **once per guest library path**. Removing it later in Steam is respected, even
+after selecting another share and switching back. The marker is
+`~/.local/share/Steam/config/steamac-share-library.json` (next to `config.vdf`); to register a
+removed path automatically again, remove that path from the marker with Steam stopped.
+Changing only the Mac folder while keeping the same guest mount path does not register it again.
+
+**Filesystem: APFS recommended.** Proton stores Windows prefixes in each library's
+`steamapps/compatdata`; these need symbolic links, not just writable game files. The hook probes
+creating and following a symlink on the mounted share as `steamos`, and skips registration if
+that fails (including exFAT, which has no symlinks). Mac OS Extended/HFS+ supports symlinks and
+is not excluded by filesystem name. APFS virtio-fs read/write, chmod and a Proton 11 ARM64 prefix's
+`dosdevices/c:` / `z:` symlinks were checked in the VM. A normal case-insensitive APFS share remains
+case-insensitive in Linux: games that require distinct case-only filenames still need a
+case-sensitive volume or the VM's internal library. This does not convert a Mac/Windows Steam
+library into a Linux one; use a separate folder for SteamOS.
+
+Implementation: `steam-share-library` is a non-blocking `ExecStartPre` of `steam.service`,
+enabled by `steamac.share_library=1` alongside `steamac.share=PATH`. It checks the **exact
+mount point** with `findmnt -t virtiofs` before touching any files. The Deck client tested
+(1792618285) reads `~/.local/share/Steam/steamapps/libraryfolders.vdf` first, falls back to
+`config/libraryfolders.vdf` if it is absent, and rewrites both as matching copies. The hook
+atomically edits the authoritative file, preserving existing numbered entries (or importing
+the legacy file); it supplies only `path` and `label`. Steam assigns `contentid`, measures
+`totalsize`, and populates `apps` itself. No guessed IDs or installed-app records are written.
+With a previously registered share absent, Steam **keeps the entry but logs “Install folder …
+not mounted”**; it is not a usable install location until the share returns. The hook leaves
+both the list and marker alone in that case, never creating a substitute library on the guest
+disk. Keep an external volume connected before starting the VM; reconnect and restart if missing.
+
+The launcher adds the device with `krun_add_virtiofs4` (`KRUN_SEMANTICS_LINUX_SIMPLIFIED`: the
+guest sees its own uid/gid on every file, so the `steamos` user reads and writes without ownership
+mapping; no DAX window) and passes `steamac.share=PATH` on the kernel command line. The initramfs
+("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, no empty, `.` or `..`
+components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount unit
+(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`) wanted by
+`multi-user.target`. It requires and runs after `steamos-create-homedir.service`, before user
+sessions: on a fresh disk SteamOS must create and populate the user's home before systemd creates
+the mount point, otherwise the home would be root-owned and its skeleton skipped. The unit has
+`DefaultDependencies=no` to avoid ordering it before `local-fs.target` (home creation runs later);
+it retains the usual unmount-on-shutdown ordering. A failed share does not prevent boot. The unit
+lives for that boot only, like the runtime unit masks. A folder that is not there at start
+(external drive unplugged, renamed) is logged and skipped — the launcher starts without the share;
+only an explicit `--share` refuses to start. The Settings row shows it in red as not found.
+
+**Security.** Per libkrun's security model, virtio-fs does not confine the guest to the shared
+directory: on macOS the lookup does not filter `..`, and the launcher is not sandboxed. With a
+share set, root in SteamOS (anything that gains root there: a game, a Flatpak, a Proton exploit)
+can potentially read anything your Mac user can read, and write where that user can write. Share
+only with a SteamOS you trust, and keep the share off when you do not need it. SSH is not involved.
 
 ## Controller
 
@@ -507,7 +631,10 @@ the button on each connection. The launcher log records whether GameController e
 its system-gesture binding, button and profile callbacks, and whether the Home event was queued
 for the guest pad port; `pad state` includes the current Home state. This distinguishes host input
 handling from guest delivery without assuming that a Bluetooth failure is a DualSense passthrough
-problem (DualShock 4 uses the virtual pad).
+problem (DualShock 4 uses the virtual pad). `pad state`, and `controllers.txt` in a problem report that
+includes launcher logs, also list a passive HID inventory (IDs, names, transport, usages and why each
+device is or isn't routed; excluded devices are never opened and Input Monitoring is not requested) and
+the latest DualSense stick, raw motion-sensor and touch snapshot with its age (STEAMAC-8R/8V).
 
 **Rumble.** The pad has `FF_RUMBLE`, like the real drivers, so SDL and Steam rumble it — games
 through Steam Input reach it via Steam's virtual Xbox pad. uinput leaves playback to its user-space
@@ -534,6 +661,43 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
+**Generic HID joysticks and gamepads.** **Automatic** also passes Generic Desktop (usage page 1)
+Joystick (4) and Game Pad (5) devices not published by GameController
+through as themselves: for example DJI FPV Remote Controller 2 (`2ca3:1020`) and Spektrum SLT6
+(`35cf:04fb`). The existing raw-HID/uhid path preserves the descriptor, IDs and reports; the
+guest's `hid-generic`, SDL and Steam handle layout and calibration. This is not Xbox emulation:
+configure the device in SteamOS/Steam Input, not the launcher's live GameController input test,
+A/B swap or deadzone. A current guest layer with `caps hid` is required.
+Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default.
+
+Each device takes the lowest free usable player whose guest service supports HID, sharing the
+four players with GameController and Steam Controllers (enable **Additional controllers** for
+players 2–4). It keeps its player while free, but yields to a GameController controller and moves
+to the next free player, or waits if none is available. BLE Steam Controller reservations remain
+sticky and are not displaced. Generic devices cannot reserve a player on an older guest without
+`caps hid`, and cannot wake a paused VM. Turn off **Virtual controller** (`--no-gamepad`) or
+choose an explicit **Appears in SteamOS as** kind to stop generic discovery and passthrough.
+`pad state` lists each generic controller's name, VID/PID, registry ID and reserved player.
+
+To avoid duplicate input, a generic HID is GameController-owned only when
+`GCController.supportsHIDDevice` is true (cached per HID registry ID) **and** a published
+`GCController.controllers()` entry has a `vendorName` or `productCategory` exactly matching
+the HID product, manufacturer, or “manufacturer product”, ignoring case and collapsing whitespace.
+There is no public controller-to-HID link; this is a name match, not a VID/PID guess.
+Supported devices wait unopened for **2 seconds** after discovery for asynchronous publication;
+without a matching controller they then pass through as generic HID, including the DJI C5
+even when macOS advertises support. A later matching GC connection releases the generic route
+before player assignment; disconnecting it re-offers the HID device. Each hold, acceptance or
+GC-owned skip/release is logged once per transition with VID:PID and product.
+DualSense and Valve devices keep their existing routes.
+Discovery uses an independent-devices IOHIDManager: matching does
+not open unrelated devices or request Input Monitoring. Ordinary joystick/gamepad collections
+do not need that permission; a connected composite controller with keyboard/mouse/trackpad collections
+may need it, and only opening an accepted controller can request it. Apple marks those collections
+in [IOHIDDevice](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDDevice.cpp);
+its [device plugin](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDLib/IOHIDDeviceClass.m)
+requests access on open, not on usage matching.
+
 **Steam Controller passthrough.** With **Appears in SteamOS as** Automatic or Steam Controller, a
 Steam Controller (2026) goes to SteamOS as itself through the same uhid path, so Steam drives its
 trackpads, gyro, back buttons and haptics with its own driver. Alone it is player 1; with
@@ -555,8 +719,15 @@ DualSense on player 1) becomes the next free player instead of being dropped:
 Its report descriptor has keyboard and mouse collections (the controller's desktop mode), so macOS
 opens it only with System Settings → Privacy & Security → **Input Monitoring**: the launcher asks
 for it and opens the device as soon as it is granted (`hid passthrough: Input Monitoring granted, reopening the HID manager`).
-macOS returns a Bluetooth LE controller's 64-byte feature report 1 (Steam's command channel) as
-65 bytes, so GET_REPORT buffers have headroom over the descriptor's sizes.
+Settings → Controller shows a warning when a controller needs this permission, with an
+**Mac Input Monitoring Settings…** button that requests access and opens the relevant System Settings pane.
+The warning is shown only while Steam Controller or generic HID matching is enabled. If access is already
+enabled but the controller is still unavailable, restart the launcher.
+macOS returns a Bluetooth LE Steam Controller's 64-byte feature report 1 (Steam's command channel) as
+65 bytes, so only that controller's Bluetooth GET_REPORT buffers have headroom over the descriptor's
+sizes; a USB DualSense gets exactly the descriptor's sizes (its firmware report 32 timed out with the
+headroom in 1.9.9, STEAMAC-84). A disconnected controller is removed by the device reference the launcher
+holds, so reconnecting it over USB or Bluetooth passes through the new device.
 
 **Several controllers.** With Settings → Controller → **Additional controllers** (on by default,
 applies now) further connected controllers are players 2–4, each with a gamepad of its own in
@@ -595,16 +766,25 @@ desync, and Valve's CA for disk creation (licenses are in `Resources/licenses`);
 `host/launcher/AppIcon.icon` (an Icon Composer document) is compiled by `actool` into `Assets.car`
 (Liquid Glass on macOS 26, ready-made renders for macOS 15), with a fallback `AppIcon.icns`;
 ad-hoc signing with hypervisor + disable-library-validation entitlements. The app can be moved to
-`/Applications`.
+`/Applications`. Its Info.plist records this build tree's path (`SteamacBuildOut`, e.g.
+`/Users/<you>/…/work/out`, so a moved app still finds the tree's disk): do not hand this bundle to
+others; `dist.sh` builds drop the key.
 
 Launching from Finder (without arguments) uses the kernel, initramfs, and layer from the bundle,
 and the SteamOS disk from Settings → Advanced → Disk image. By default:
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`; otherwise, the repository's
 `work/out/steamos.img` (next to the bundle or where it was built). If there is no disk, a
 first-launch window offers **Create New Disk…** (see the next section) or **Use Existing Disk…**
-(the image is used in place and never copied; `scripts/build-image.sh` also builds one). In this
+(the image is used in place and never copied; `scripts/build-image.sh` also builds one). A disk must be
+a raw SteamOS GPT disk with this layout's partitions: a Steam Deck recovery archive or the macOS Steam
+installer is rejected when chosen, and a saved disk that is not one is refused before boot
+(STEAMAC-7Y/7Z). If the guest's initramfs fails anyway (`steamac-init: FATAL …`), the window shows the
+failure instead of staying at 3%. A disk the launcher may not open or lock (permissions, removable-volume
+access) is explained with Finder → Get Info → Sharing & Permissions and Privacy & Security, and logged,
+not sent as a crash report (STEAMAC-15). In this
 mode, the guest console and launcher log are written to
-`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`; SIGUSR1 frame dumps go there too. `./run.sh`
+`~/Library/Logs/es.fxgam.steamac/steamac-vm.log` (past 64 MiB, also during a session, it moves
+to `steamac-vm.old.log`); SIGUSR1 frame dumps go there too. `./run.sh`
 and `work/out/steamac-vm` work as before (window settings also apply to them unless overridden by
 flags).
 
@@ -669,8 +849,11 @@ without which `--create-disk` prints the links and exits with code 2. Acceptance
 agreement URL) is stored in the settings domain and remains valid until the agreement URL in the
 code (`SteamOSLicense.eulaURL`) changes.
 
-External APFS, Mac OS Extended, and exFAT volumes can hold the disk. FAT32/MS-DOS is rejected
-before downloading because of its 4 GiB per-file limit (the temporary rootfs alone is 10 GiB).
+External APFS, Mac OS Extended, and exFAT volumes can hold the disk; APFS is recommended. FAT32/MS-DOS is
+rejected before downloading because of its 4 GiB per-file limit (the temporary rootfs alone is 10 GiB), and
+so are NTFS, network filesystems and unknown filesystem drivers (STEAMAC-8S: an NTFS driver refused the
+92 GB disk with “File too large” after an hour of downloading); a late file-size refusal is explained and
+logged, not sent to Sentry.
 Read-only volumes and folders you can't write to are also rejected. Unlike APFS, exFAT has no sparse files: it needs space for the
 full selected disk size plus the temporary rootfs, even before games are installed. There the download cache also costs far
 more than its ~4.4 GB of data: macOS keeps each chunk file's provenance attribute in an extra `._` file, and every file and
@@ -681,14 +864,26 @@ Expected location failures (an existing destination, busy cache, read-only volum
 full volume, disconnected drive, a destination or cache folder that disappears during creation, or
 filesystem I/O error) are logged with guidance, not sent as errors to Sentry,
 including failures after creation has started. Metadata/bundle connectivity failures (offline, DNS, timeout,
-connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries.
+connection loss, and system TLS rejection) follow the same policy as exhausted desync download retries,
+including a timeout while reading a chunk's HTTP response body (STEAMAC-92). If desync cannot store a
+chunk in the cache (`invalid argument` on an exFAT cache, STEAMAC-90/91), the log records the failing
+cache shard's state (mode, entry and temporary-file counts, read errors) for diagnosis.
 HTTPS certificate validation is never bypassed. Unexpected creation and bundle-signature failures still report,
-with the original technical diagnostic in event details.
+with the original technical diagnostic in event details. If the bundled desync is missing, unreadable or
+not executable (STEAMAC-8K), the window explains that the installation is incomplete: reinstall from the
+official DMG into Applications and check security software. One warning per installation records
+translocation, desync's presence and permissions, the code-signature result and bundle-relative
+Resources names and sizes; the bundle's absolute path stays in the local log and no crash-report dialog opens.
+The warning also records whether the bundle, `Contents` and `Resources` still exist (type and errno): an
+app moved, deleted or replaced while running loses all three (STEAMAC-AE), so the guidance asks to quit
+FX Steam Launcher completely before replacing or moving it, then reopen it from Applications.
 The launcher logs the target/cache filesystem type. A chunk-cache rename collision is retried once with a
 single worker and no cache. A rootfs hash mismatch is checked again with a sequential read to distinguish bad
 sparse-extent metadata from bad file bytes. If the bytes are bad, the temporary rootfs and chunk cache are
 deleted and downloaded again once, serially without a cache; both disk slots are cleared before retrying.
 A second integrity failure remains reportable; no disk is published without matching the signed manifest.
+It records the sequential SHA-256 and the first 1 MiB block where a source reread differs from rootfs-A
+(offset and both block digests), so unstable reads can be told from copy errors (STEAMAC-9F/9H).
 Disk creation compares the partition table read back with what it wrote, both in the private file and
 after publishing the disk. A difference (STEAMAC-6J, exFAT), or a reconstructed rootfs that disappears
 before the disk is allocated (STEAMAC-68), stays reportable with file identities and the differing GPT
@@ -711,7 +906,7 @@ This expected rejection is logged only; all other signature failures still repor
    embedded in the code); the system trust store is not used. A custom squashfs reader (using zstd
    from the pinned zstd release, `fetch-zstd.sh`) extracts `manifest.raucm` and `rootfs.img.caibx`;
    `compatible=steamos-aarch64`, the version, and the slot size are checked.
-3. Official desync (`fetch-desync.sh`, pinned version and sha256) assembles the 10 GB `rootfs.img`
+3. desync (`fetch-desync.sh`: built from source at a pinned version and Go module sum) assembles the 10 GB `rootfs.img`
    from Valve's chunk stores (~4.4 GB of data); the chunk cache is `desync/` in
    `~/Library/Caches/es.fxgam.steamac` for a disk on the home volume, otherwise in `<disk>.cache` next
    to the disk (an external drive then needs no internal space for it; the folder is removed after
@@ -764,7 +959,7 @@ layer.
 
 | Option | What it is | Pros and cons |
 |---|---|---|
-| **Steam Deck client** (`deck`, by default) | public ARM64 Steam Deck client, `steamdeck_stable` branch (the same build as the public `steam_client_linuxarm64`; not officially announced for ARM) | normal sign-in with an on-screen QR code; a public client branch rather than an internal beta |
+| **Steam Deck client** (`deck`, by default) | public ARM64 Steam Deck client, `steamdeck_stable` branch (the same build as the public `steam_client_linuxarm64`; not officially announced for ARM) | normal sign-in with an on-screen QR code; a public client branch rather than an internal beta; **Proton Experimental (ARM64)** is a separate compatibility choice from x86-64 **Proton Experimental** |
 | **Steam Deck client (beta)** (`deckbeta`) | `steamdeck_publicbeta` branch | like `deck`, but beta |
 | **Steam Frame client** (`frame`) | Valve's beta client for Steam Frame (`linux_arm64_beta_<hash>`, flags `-deckard -vrgamepadui`) — as in the image | the client the image ships; an internal beta for a device not yet released; signing in uses sign-in mode (below) |
 
@@ -794,7 +989,12 @@ It does not delete the old cache or change its permissions. This uses Metal's op
 SPI; if the override is unavailable or the replacement is also unwritable, that is logged and
 shader compilation errors remain reportable. `work/out/steamac-vm --selftest-metal-cache` reproduces
 the `monolithic_metal.pcm: Operation not permitted` failure in a private immutable cache, then
-verifies actual Metal source compilation with the replacement (no VM or Sentry events).
+verifies actual Metal source compilation with the replacement (no VM or Sentry events). The choice is
+made only before Metal initialises: a cache that becomes unwritable later cannot be redirected in the
+running process, so reports carry the startup decision (`metal_cache` tag) and read-only metadata of
+the failing `monolithic_metal.pcm` path (STEAMAC-7W). MoltenVK does not support pipelines that combine
+tessellation with a geometry shader; they fail with `VK_ERROR_FEATURE_NOT_PRESENT` instead of compiling
+with an invalid buffer binding (STEAMAC-83).
 
 | Option | What it is | Pros and cons |
 |---|---|---|
@@ -816,26 +1016,58 @@ checked before it is deserialized, so a damaged entry is a cache miss instead of
 STEAMAC-6M/6K/7J/7H/7P crashes in `vkCreateComputePipelines` had another cause: Mesa's NIR serializer
 stored source indices in 20 bits, so shaders with more than 2^20 objects came back with sources pointing at
 unrelated objects; larger indices now follow in a separate word (`host/kosmickrisp/test/nir_object_ids.c`
-round-trips a shader with over a million defs in the KosmicKrisp build).
+round-trips a shader with over a million defs in the KosmicKrisp build). Selections nested deeper than 128
+are emitted as guarded sibling blocks, because Metal rejects source nested past 256 brackets (a
+STEAMAC-G report; `sentry-g-brackets.sh` checks a 320-case divergent ladder on the GPU). For a repeatable
+KosmicKrisp stall, `MESA_KK_DEBUG=syncs,cbs` set when starting the macOS launcher (not as a game
+argument) traces queue synchronization and every CPU wait longer than one second (STEAMAC-94).
+A buffer copy with a NULL source or destination buffer is skipped with one warning instead of crashing the
+VM process (Dota 2, STEAMAC-9S/9T; `host/kosmickrisp/test/copy-buffer-null.py`).
 Mesa's barrier fallback on macOS let `util_queue_finish` hang a device teardown (shader disk cache);
 `host/kosmickrisp/test/util_queue_finish.c` runs in the KosmicKrisp build. MoltenVK: a pipeline blending
 an attachment Metal cannot blend (R32_UINT) fails (STEAMAC-3A); vertex-stage auxiliary buffers are
 packed into Metal's 31 buffer slots (STEAMAC-67); full 32-bit specialization constant IDs work
 (STEAMAC-6A); an optimal image in imported host memory gets a placement heap, so 2D views of a 3D image
 used as render attachments no longer dereference a missing heap (STEAMAC-76/77); failed pipelines log
-complete small shaders, Metal descriptors, blend state and fragment output indices (STEAMAC-41/75).
-SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V and keeps a dual-source blend
-output's second index when it packs outputs (STEAMAC-75)
-(`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader). wmtr (DXMT) refuses only
+complete small shaders, Metal descriptors, blend state and fragment output indices (STEAMAC-41/75);
+dual-source blend factors on an attachment whose shader has no secondary output use zero for it, which
+Vulkan leaves undefined and Metal rejected (STEAMAC-75); on M1, sample-qualified perspective projection
+interpolates at `get_sample_position(sample_id)`, avoiding Metal's missing `llvm.agx2.sample.itrproj`
+intrinsic (STEAMAC-8J). SPIRV-Cross fixes the MSL errors of STEAMAC-33/6D/6E/5M/5K/2N/5C/6V, keeps a
+dual-source blend output's second index when it packs outputs (STEAMAC-75), keeps explicit
+interface-block member Locations with gaps (Locations 0 and 2 became `locn0`/`locn1`), and declares an
+object shader's payload `locations` as `uint[32][4]` (same layout): Apple's compiler crashed on partial
+stores into `uint4 locations[32]`, reported as an internal error or an interrupted XPC connection
+(STEAMAC-41/R); interrupted compiler-service reports carry host memory pressure and swap (STEAMAC-3X).
+`vec3` members of Workgroup (shared) arrays are stored packed, as Vulkan's padding rule sizes them, so a
+968-element `{float; vec3; float}` array needs 19360 bytes instead of Metal's 46464 > 32768 (STEAMAC-57).
+A vertex output narrower than the fragment input at the same Location (float3 → float4) is widened to
+the input's width; missing varyings and different numeric types remain unsupported (STEAMAC-2M/88).
+A shader function named `rgb9e5` is renamed so it no longer collides with Metal's `rgb9e5` pixel type
+(STEAMAC-A9), and a geometry/mesh stage writing only `ClipDistance` also writes the `user(clip0)` copy
+the fragment shader reads (STEAMAC-A2).
+`host/moltenvk/repro/sentry-msl.sh` compiles each reconstructed shader. wmtr (DXMT) refuses only
 garbage or freed object handles, ends encoders a game left open when its context goes away (also past
 65,536 live objects, STEAMAC-70), and refuses a render pipeline without a vertex function
 (STEAMAC-6S/6Z); `wmtr/tests/wmtr_dxmt_test.m` drives DXMT's own command lists through the shipped
 executor on the GPU.
 
+Shared Vulkan images on KosmicKrisp use imported shared pages rather than a private tiled heap
+(#58, temporary workaround for Mesa !44929). Only explicitly external host-memory images take this
+path: queries advertise one mip, one layer and single-sample linear backing, even for `OPTIMAL`;
+ordinary host-visible imports keep their tiled heaps. Guest Venus and virglrenderer preserve this
+contract only for the KosmicKrisp renderer; MoltenVK's legacy-tiling refusal is unchanged.
+`host/moltenvk/repro/shared_image.c` checks both directions between two devices (host shm imports,
+real exported/imported Vulkan fds in Linux). This verifies the sharing primitive, not MSFS 2024:
+MoltenVK's host `OPTIMAL` case skips its known row-pitch limitation rather than aborting.
+
 **Allow DXMT (D3D11 on the Mac's Metal), experimental.** Settings → Advanced → **Allow DXMT (D3D11 on
 the Mac's Metal)** is off by default and applies on next start (`--wmtr-lib PATH` or `--no-wmtr` for one launch).
 The app bundles `libwmtr_host.dylib`; the guest layer carries DXMT's
-`{d3d11,dxgi,d3d10core,winemetal}.dll` and `winemetal.so`. With the toggle on, the launcher offers
+`{d3d11,dxgi,d3d10core,winemetal}.dll` and `winemetal.so`. If macOS cannot supply a Metal drawable (for
+example a zero-size layer or a drawable timeout), DXMT skips that frame instead of presenting `nil`, which
+Metal turns into an assertion that ended the VM (STEAMAC-98); a bounded log line records it and rendering
+continues with the next drawable. With the toggle on, the launcher offers
 libkrun's wmtr virtio-gpu context (patch 0018, capset 30) and boots with `steamac.gfx=dxmt`.
 The guest's `steam-gfx-path` swaps DXMT into every installed x86-64 Proton and watches for Proton
 installs and updates; turning the toggle off boots with `steamac.gfx=vulkan` and restores Proton's
@@ -853,8 +1085,13 @@ This is not just a DLL choice: some games crash under x86-64 Proton 10.0 + FEX r
 DLLs used. Stellar Blade Demo (3564860), for example, ends SEH recursion with
 `virtual_setup_exception stack overflow` there, but runs on Proton 11.0 ARM64.
 Steam downloads Proton 10.0 (x86-64, under FEX in Steam Linux Runtime 3.0) on the first DXMT game
-launch, and `steam-gfx-path --watch` puts DXMT into it. Proton Experimental and x86-64 Proton 11.0
-need Steam Linux Runtime 4.0, which the arm64 client refuses to install ("Invalid platform").
+launch, and `steam-gfx-path --watch` puts DXMT into it. The **x86-64** builds of Proton Experimental
+and Proton 11.0 need the x86-64 Steam Linux Runtime 4.0 (`SteamLinuxRuntime_4`, app 4183110).
+Do not confuse them with **Proton Experimental (ARM64)** or **Proton 11.0 (ARM64)**: these use
+the separate ARM64 runtime
+(`SteamLinuxRuntime_4-arm64`, app 4185400), which Steam installs on ARM64. Select the tool whose
+name explicitly ends in **(ARM64)** in the game's **Properties → Compatibility**; the Steam Deck
+client also offers ARM64 Experimental, so switching to the Frame client is not required for it.
 The wildcard entry ("0") is never used: Steam applies a high-priority wildcard to its own tools
 as well and emptied the FEX tool that way. Turning Allow DXMT off removes the script's mappings.
 D3D12 on Proton 10.0 runs Wine under FEX instead of ARM64EC, costing CPU time.
@@ -880,8 +1117,9 @@ The in-process executor and DXMT's raw-host-address protocol are not a VM securi
 That is why this path is off by default and experimental; an executor fault can also stop the VM.
 Enable it only for guest software you trust.
 
-Before starting the VM, the launcher sets `STEAMAC_WMTR=1`, `STEAMAC_WMTR_LIB` (the **Executor library**
-override, otherwise `@rpath/libwmtr_host.dylib` from the app's Frameworks or `work/out/host/lib`) and
+Before starting the VM, the launcher sets `STEAMAC_WMTR=1`, `STEAMAC_WMTR_LIB` (`--wmtr-lib PATH`; the dev
+launcher also takes the **Executor library** setting, which the app bundle ignores; otherwise
+`@rpath/libwmtr_host.dylib` from the app's Frameworks or `work/out/host/lib`) and
 `WMTR_PRESENT=overlay`; all three are cleared when off. A missing/unloadable library or missing
 `wmtr_host_abi_version` disables the path for that boot (logged and red in Settings; explicit
 `--wmtr-lib` exits with the reason); libkrun rejects another ABI version. Problem/crash reports
@@ -947,8 +1185,9 @@ the client reconnects.
 `host/launcher/dist.sh` turns the built `work/out/FX Steam Launcher.app` into the downloadable
 `work/out/dist/FX-Steam-Launcher-<version>.dmg` (the app + a link to `/Applications`). A copy of the
 bundle without the `SteamacBuildOut` key (the path to this build tree) is re-signed with Developer ID,
-hardened runtime, and a secure timestamp: first all nested Mach-O files (`Frameworks/*.dylib`, helper
-programs in `Resources`), then the bundle with `steamac-vm.entitlements` (hypervisor,
+hardened runtime, and a secure timestamp, inside-out: first all loose nested Mach-O files
+(`Frameworks/*.dylib`, helper programs in `Resources`, Sparkle's `Autoupdate`), then nested bundles
+deepest first (Sparkle's `Updater.app`, `Sparkle.framework`), then the bundle with `steamac-vm.entitlements` (hypervisor,
 disable-library-validation, and audio-input — without the latter, hardened runtime silently blocks the
 microphone). The app is notarized and stapled, then the DMG is signed, notarized, and stapled —
 Gatekeeper allows it through even offline (the usual “downloaded from the Internet” prompt still
@@ -975,10 +1214,44 @@ code of GPL components (the kernel with patches and configuration, busybox from 
 dosfstools, e2fsprogs, btrfs-progs, build scripts, `README.txt`); attach it to the GitHub release
 alongside the DMG. For an older release: `scripts/gpl-sources.sh v1.2`.
 
+In-app updates ([Update check](#update-check)): `dist.sh` adds `SUFeedURL` (`SPARKLE_FEED_URL`, by default
+`https://fxgl.github.io/steamac/appcast.xml`), `SUPublicEDKey` (`SPARKLE_PUBLIC_KEY`, by default fxgl's
+release key `ML1BKHcTTwKlVSLtTdMvyk7Fhwg35VN1nUp+o4fezt8=`, pinned in `dist.sh`: installed copies accept
+only updates it signed), `SUVerifyUpdateBeforeExtraction`, and `SURequireSignedFeed`; a notarized build
+fails unless the Keychain holds that key's private half (`generate_keys -p` prints its public half). The
+EdDSA key pair was created once with `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` (Sparkle's tools
+come with the SwiftPM package, the same version as the embedded framework): the private key stays in the
+login Keychain, never in the repository or CI. Back it up offline (`generate_keys -x <file>`;
+`generate_keys -f <file>` imports it on another Mac): without it, no update can reach installed copies
+any more. `build.sh` sets `CFBundleVersion` to `CFBundleShortVersionString` (Sparkle orders versions by it).
+A release, in this order (the feed must never point at assets that are not uploaded yet):
+
+```sh
+host/launcher/dist.sh
+gh release create v<version> work/out/dist/FX-Steam-Launcher-<version>.dmg \
+    work/out/dist/FX-Steam-Launcher-<version>-gpl-sources.tar --notes-file <notes.md>
+host/launcher/appcast.sh    # docs/appcast.xml, delta updates attached to the release
+git commit -m "appcast: <version>" docs/appcast.xml && git push    # GitHub Pages publishes the feed
+```
+
+`appcast.sh` checks that the release's DMG is the local one (same size), then runs Sparkle's
+`generate_appcast` on `work/out/updates` (the archives of earlier versions; the feed is taken from
+`docs/appcast.xml`): the new item with the DMG's EdDSA signature, the minimum macOS from
+`LSMinimumSystemVersion`, the release notes of the GitHub release (Markdown, embedded) and the download
+URL on that release; delta updates from up to 3 earlier versions whose DMGs are in `work/out/updates`
+(the kernel and most helpers rarely change), renamed without spaces (GitHub renames such assets) and
+uploaded to the release; the whole feed signed. Further arguments go to `generate_appcast`, e.g.
+`--phased-rollout-interval 86400` (the update reaches users over 7 days) or `--critical-update-version ''`.
+Never edit `docs/appcast.xml` by hand: its signature covers the whole file. A local end-to-end test:
+`dist.sh --no-notarize` with `SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast.xml` and
+`SPARKLE_PUBLIC_KEY=<test key>` for two versions, `SPARKLE_KEY_FILE=<test private key>
+host/launcher/appcast.sh --local http://127.0.0.1:8765` after each, and
+`python3 -m http.server 8765` in `work/out/updates-local`.
+
 ## Crash reports (Sentry)
 
 The launcher sends crash reports and a few errors to the developers' own Sentry server
-(`sentry.fxgam.es`, sentry-cocoa 9.30.0 SDK via SwiftPM). Enabled by default; disable it with the
+(`sentry.fxgam.es`, sentry-cocoa 9.30.0 SDK via SwiftPM). Disabled by default; enable it with the
 **Send crash reports and diagnostics** checkbox in Settings → General, in the first-launch window,
 or in the Create SteamOS Disk window (the “What is sent” link displays the list below). When disabled,
 the SDK does not start at all and makes no network connections (reports already saved on disk remain
@@ -996,7 +1269,9 @@ What is sent:
   guest GPU context becomes fatal/device lost (vkr “fatal decoder state”, “device lost”), MoltenVK
   pipeline compilation errors (`[mvk-error] … compile failed`; if MoltenVK printed MSL source
   (`[mvk-msl] …`: the first 40 lines and lines around the error), it is sent in extra `msl_source`,
-  not in breadcrumbs; the vkr line “pipeline … creation failed on host” is a breadcrumb only), a
+  not in breadcrumbs; the complete failing shader, up to 256 KiB and scrubbed, is attached as a `.metal`
+  file, at most two different shaders per process, deduplicated by content hash (STEAMAC-AD); the vkr
+  line “pipeline … creation failed on host” is a breadcrumb only), a
   Rust panic in libkrun (`thread … panicked at`), failure of initial disk provisioning (`provision
   failed`), failure to create a disk, unexpected VM exit (nonzero exit code or signal when shutdown
   was not requested by the user), and the idle indicator's “SteamOS is not responding”. For a VM
@@ -1008,6 +1283,11 @@ What is sent:
   Not-responding reports include `stall_history`: up to 32 one-second GPU command-counter, heartbeat age,
   guest uptime/load, process CPU-time and host polling-gap samples, even with performance statistics
   off (STEAMAC-8). Missing agent heartbeats alone do not prove that the whole guest or GPU hung.
+  GPU-activity, VM-memory and host-thread snapshots are bounded separately; thread states and CPU
+  estimates are evidence, not backtraces or proof of a GPU deadlock. The history also records host
+  activation, key window and window visibility/occlusion. “Still working” means the guest heartbeat is
+  alive; it does not prove that a game is progressing or compiling shaders. A VM exit report states why
+  macOS's crash report was not attached (none written in time, unreadable, incomplete or another pid).
   The same samples are logged once when an idle indicator lasts 10 s, including with a live
   heartbeat, so Report a Problem can diagnose game stalls without enabling performance statistics.
   After a host scheduling gap (the launcher itself not running for seconds) the detector watches a
@@ -1067,24 +1347,58 @@ out): 1.9 shipped without an upload, and crashes in `steamac-vm` and libkrun sta
 
 ## Update check
 
-When the app starts (once per launch, not on every VM reboot, and no more than once every 6 hours —
-even across launches), the launcher requests the latest release in the background without delaying
-startup from `https://api.github.com/repos/fxgl/steamac/releases/latest` (unauthenticated, 10 s
-timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with its own version
-(`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is available, a window
-appears next to the VM window (not over it if there is room on screen; without taking focus — the
-keyboard and captured mouse remain with the VM): “FX Steam Launcher X.Y is available — you have …”,
-with the release description and buttons **Download** (opens the release's `.dmg` in a browser, or
-the release page otherwise), **Skip This Version** (this version is no longer offered at startup),
-and **Remind Me Later** (offers it again at the next check). The app menu's **Check for Updates…**
-item (while the available version has not been skipped, “Update Available: X.Y…” with a New badge,
-opens this window) checks immediately — without the 6-hour limit and including skipped versions —
-and reports “You're up to date” or an error; network and HTTP errors at startup are only logged
-(`update: …`). Disable it with the **Check for updates at startup** checkbox in Settings → General
-(effective immediately). The dev launcher `work/out/steamac-vm` does not check at startup (the menu
-works); source builds (`bundle.sh`) and releases do.
+Releases update themselves in the app (Sparkle); every other build checks GitHub's latest release and
+offers the DMG. Both use the same window next to the VM window (not over it if there is room on screen;
+without taking focus — the keyboard and captured mouse remain with the VM), the app menu's **Check for
+Updates…** item (“Update Available: X.Y…” with a New badge once a version was found), and the **Check for
+updates at startup** checkbox in Settings → General (effective immediately).
 
-Privacy: the request goes only to `api.github.com` (GitHub) and includes only `User-Agent:
+**In-app updates (releases).** A release (`dist.sh` puts the feed and its EdDSA public key into
+Info.plist) runs [Sparkle](https://sparkle-project.org) 2.10.1 (`Contents/Frameworks/Sparkle.framework`,
+without its XPC services: the app is not sandboxed) with its own UI replaced by the window above. While
+the checkbox is on, it fetches `https://fxgl.github.io/steamac/appcast.xml` at most every 6 hours, also
+during a session. The feed is signed as a whole and every update carries its own EdDSA signature, both
+checked against the key in the app before anything is unpacked (`SURequireSignedFeed`,
+`SUVerifyUpdateBeforeExtraction`); Sparkle also requires the new app's code signature to match.
+Versions that need a newer macOS (or another Mac) are not offered; the menu's check says why. A new
+version shows its release notes and **Install Update** (downloads in the background — SteamOS keeps
+running, **Hide** closes the window, **Cancel** stops the download — then Sparkle's installer prepares
+it), **Skip This Version**, and **Remind Me Later**. A prepared update offers **Install and Relaunch**:
+SteamOS shuts down exactly as with Shut Down SteamOS (power key, up to 180 s, never a force quit), then
+Sparkle's installer replaces the app from outside the running process and opens it again; and
+**Install on Quit** (also closing the window): the update installs whenever the launcher exits. A delta
+update (only the changed files) is used when the feed has one for the installed version, else the full DMG.
+
+The VM process hosts Sparkle (it is the only one running NSApplication); quitting never goes through
+AppKit (the guest powers off and libkrun ends the process), and the supervisor starts a new VM process
+from the bundle after a guest reboot, which would race with the installer replacing it. So, while an
+update is prepared, the VM process leaves an `update` marker in the run dir and the supervisor never
+boots again; a SteamOS restart (from SteamOS or Restart VM) becomes Install and Relaunch. Sparkle's own
+quit request (it follows the shutdown the launcher started) is ignored, so it cannot turn into a force
+quit; the user's second quit still force-quits as before.
+
+Copies that cannot replace themselves keep the GitHub check below (logged as `update: in-app updates
+off (…)`): source builds (`bundle.sh`), the dev launcher, an app started from the DMG or translocated by
+Gatekeeper (not moved to Applications), and copies on a read-only volume.
+
+Privacy: Sparkle's requests go only to `fxgl.github.io` (the feed) and GitHub release downloads, with
+its standard `User-Agent` (app and Sparkle versions); no system profile, no Mac or user identifiers, no
+Sentry. Sparkle keeps its state (last check time, skipped version) in the app's defaults (`SU…` keys).
+
+**GitHub release check (other builds).** When the app starts (once per launch, not on every VM reboot,
+and no more than once every 6 hours — even across launches), the launcher requests the latest release in
+the background without delaying startup from `https://api.github.com/repos/fxgl/steamac/releases/latest`
+(unauthenticated, 10 s timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with
+its own version (`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is
+available, the window shows “FX Steam Launcher X.Y is available — you have …”, with the release
+description and buttons **Download** (opens the release's `.dmg` in a browser, or the release page
+otherwise), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
+(offers it again at the next check). The menu item checks immediately — without the 6-hour limit and
+including skipped versions — and reports “You're up to date” or an error; network and HTTP errors at
+startup are only logged (`update: …`). The dev launcher `work/out/steamac-vm` does not check at startup
+(the menu works); source builds (`bundle.sh`) do.
+
+Privacy of the GitHub check: the request goes only to `api.github.com` (GitHub) and includes only `User-Agent:
 FXSteamLauncher/<version>` (plus standard HTTP headers and the previous response's ETag, so GitHub can
 reply “not modified”); no Mac or user identifiers, cookies, or Sentry. The check time, ETag, response,
 and skipped version are stored in settings (`updateLastCheck`, `updateETag`, `updateCachedBody`,
@@ -1092,9 +1406,11 @@ and skipped version are stored in settings (`updateLastCheck`, `updateETag`, `up
 
 Tests: `STEAMAC_UPDATE_URL` overrides the URL (release JSON or a `/releases` array, `http(s)://` or
 `file://`; it also enables the startup check for the dev launcher), `STEAMAC_FAKE_VERSION` overrides
-the launcher version; FIFO `--control-fifo`: `update check|startup|state`, `update press
-download|skip|later|ok|releases`, `update dump PNG` (the window and `-with-vm.png` — together with the
-VM window, as shown on screen).
+the launcher version, `STEAMAC_UPDATE_FEED` the appcast of in-app updates; FIFO `--control-fifo`:
+`update check|startup|state`, `update press download|skip|later|ok|releases|cancel|hide|install|quit`
+(`install` / `quit`: Install and Relaunch / Install on Quit), `update dump PNG` (the window and
+`-with-vm.png` — together with the VM window, as shown on screen). Local feed: see
+[Distribution](#distribution-dmg).
 
 ## Game statistics
 
@@ -1210,8 +1526,18 @@ what you expected, what happened), and checkboxes for attachments:
   Simulator's `game.log.txt`. For an ATS emulator crash, set its Steam launch options to
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`, reproduce, and report;
   the collector includes the last 512 KiB of that log. Remove the launch options afterwards.
+  Proton logs larger than 1 MiB are collected as a scrubbed first-1 MiB startup excerpt plus the last
+  1 MiB, with the middle omitted, so the runtime header and the first exception survive crash-handler
+  spam (STEAMAC-AA). Desktop Mode reports record whether `plasmashell`, KWin and Discover are running and
+  allowlisted renderer flags, without process arguments or environment values (STEAMAC-9P). Launcher logs
+  record Game Mode eligibility (Info.plist keys at runtime and on disk), native fullscreen state and
+  filtered `gamepolicyd` messages (STEAMAC-9V).
   Without Proton logs the archive notes that `PROTON_LOG=1 %command%` as a game's launch options,
-  one reproduction and a new report are needed to see a Windows game's own failure.
+  one reproduction and a new report are needed to see a Windows game's own failure. Unity Player and
+  Easy Anti-Cheat text logs are collected from the running or last-launched game's Proton prefix and the
+  three most recently modified prefixes across Steam libraries (at most four logs of 256 KiB per prefix,
+  no links out of the prefix, no saves or binaries, scrubbed); they do not imply that a game or its
+  anti-cheat works.
   FEX re-raises a crash of the emulated game from its JIT code, so the core's stack shows only an
   anonymous AArch64 address. To record where the x86_64 code faulted, create
   `~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<executable>.json` (ATS:
@@ -1272,7 +1598,7 @@ then it closes on its own; `STEAMAC_REPORT_TEST_SEND=1` also sends a test report
 
 | Directory | Contents |
 |---|---|
-| `host/moltenvk/` | MoltenVK utmapp `geometry-shaders` @05604465 + patches: depth_clip_enable, YCbCr arrays, null descriptors, geometry shader emulation for zink/DXVK (vertex stride, instancing, adjacency, fans, SCALED formats, packed vertex formats: 10-10-10-2, RG11B10F, RGB9E5, BGRA8, `gl_in`), transform feedback (DXVK stream output) and its queries (SO statistics), query result availability on copy (DXVK occlusion queries via Venus), atomics on vector components at buffer addresses (BDA, vkd3d-proton), texel buffers with offsets at any texel (vkd3d-proton), writes to small push-descriptor buffers with robustness2, variable-count descriptor arrays as runtime arrays (Metal kept 32 MB per vkd3d-proton heap array and program), allocation of auxiliary buffers, deferred release of Metal resources, patch hash in the pipeline cache UUID, `VK_NULL_HANDLE` descriptor sets in binds, fragment outputs converted to their color attachment's numeric type, zeros for vertex shader inputs without a vertex attribute, integer vertex inputs read through float formats, null-checked YCbCr helper samplers, unsupported texel buffer formats rejected; tests in `repro/` run under Metal validation (also on KosmicKrisp: `REPRO_DRIVER=kosmickrisp`); `bench/run.sh <libdir>…` compares performance of changes between builds; `bench/shaders.sh <dump or pack>` measures a game's shader compilation (SPIR-V → MSL, MSL → Metal library, pipeline states; cold/warm, threads) from a MoltenVK shader dump or a 10% sample made with `bench/pack.py` |
+| `host/moltenvk/` | MoltenVK utmapp `geometry-shaders` @05604465 + patches: depth_clip_enable, YCbCr arrays, null descriptors, geometry shader emulation for zink/DXVK (vertex stride, instancing, adjacency, fans, SCALED formats, packed vertex formats: 10-10-10-2, RG11B10F, RGB9E5, BGRA8, `gl_in`), transform feedback (DXVK stream output) and its queries (SO statistics), query result availability on copy (DXVK occlusion queries via Venus), atomics on vector components at buffer addresses (BDA, vkd3d-proton), component-packed vertex outputs under tessellation (dxil-spirv, Rift Apart), texel buffers with offsets at any texel (vkd3d-proton), writes to small push-descriptor buffers with robustness2, variable-count descriptor arrays as runtime arrays (Metal kept 32 MB per vkd3d-proton heap array and program), allocation of auxiliary buffers, deferred release of Metal resources, patch hash in the pipeline cache UUID, `VK_NULL_HANDLE` descriptor sets in binds, fragment outputs converted to their color attachment's numeric type, zeros for vertex shader inputs without a vertex attribute, integer vertex inputs read through float formats, null-checked YCbCr helper samplers, unsupported texel buffer formats rejected; tests in `repro/` run under Metal validation (also on KosmicKrisp: `REPRO_DRIVER=kosmickrisp`); `bench/run.sh <libdir>…` compares performance of changes between builds; `bench/shaders.sh <dump or pack>` measures a game's shader compilation (SPIR-V → MSL, MSL → Metal library, pipeline states; cold/warm, threads) from a MoltenVK shader dump or a 10% sample made with `bench/pack.py` |
 | `host/kosmickrisp/` | KosmicKrisp (Mesa main @ce576c29) + open Mesa MRs and steamac patches (see “Vulkan driver”), built without LLVM at runtime (`-Dllvm=disabled`, `mesa_clc` from a first build), `-Db_ndebug=true`; macOS 26+ only |
 | `host/dxmt/` | Pinned DXMT + patches, static LLVM 15, native airconv, Windows DLL cross-build and guest payload; `build.sh fetch llvm native host pe client payload` |
 | `wmtr/` | BSD-3-Clause winemetal remoting: guest `winemetal.so` over virtio-gpu to `libwmtr_host.dylib` (DXMT/LLVM linked in), presenting a CAMetalLayer inside the VM view |
@@ -1282,7 +1608,7 @@ then it closes on its own; `STEAMAC_REPORT_TEST_SEND=1` also sends a test report
 | `host/launcher/` | `steamac-vm` (Swift/AppKit): Metal window (optional MetalFX super resolution), “FX STEAM LAUNCHER” overlay with boot/shutdown progress, guest resolution = window size (× the screen's backing scale with Retina resolution) at constant DPI (EDID from the physical screen size), keyboard/mouse/tablet, the guest's Xbox 360 / DualSense / DualShock 4 pad from GameController.framework with rumble or a DualSense passed through as raw HID (`fx.pad`), network via gvproxy, VM restart on guest reboot, `--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9, everything built in, 4K pages, 16K blob-node alignment, Apple TSO for FEX; uhid, hidraw and `hid-playstation` (with the LED classes it needs) for the passed-through DualSense |
 | `guest/mesa/` | From the pinned Mesa: Venus ICD for aarch64 (Proton, gamescope, zink) and x86_64/i386 (FEX graphics provider); zink GL stack (libgallium, GLX/EGL/GBM) over the stock one in both, with backports in `guest/mesa/patches/` (Mesa 6abefa51: zink rebuilds the pipeline when only the vertex layout changes; without `VK_EXT_vertex_input_dynamic_state`, which Venus on Metal lacks, GL games otherwise draw with stale vertex formats); x86_64 fault reporter for emulated games (`/usr/lib/steamac/x86_64/fault-report.so`) |
-| `guest/initramfs/` | boot stage = “bootloader”: A/B slot selection with attempt counter, partsets, overlays for `/etc` and `/usr`; initial provisioning of the launcher-created disk (`steamac.provision=1`: static mkfs.fat, mke2fs, btrfstune in initramfs); `steamac.ssh=0` — no SSH server; launcher config payload (`steamac.config=1`) — new `steamos` password; `steamac.tz=` — the Mac's time zone in `/etc/localtime`; untouched procfs at `/run/steamac/proc` for Flatpak sandboxes |
+| `guest/initramfs/` | boot stage = “bootloader”: A/B slot selection with attempt counter, partsets, overlays for `/etc` and `/usr`; initial provisioning of the launcher-created disk (`steamac.provision=1`: static mkfs.fat, mke2fs, btrfstune in initramfs); `steamac.ssh=0` — no SSH server; launcher config payload (`steamac.config=1`) — new `steamos` password; `steamac.tz=` — the Mac's time zone in `/etc/localtime`; untouched procfs at `/run/steamac/proc` for Flatpak sandboxes; `steamac.share=` — runtime mount unit for the shared folder (virtio-fs `macshare`, see “Shared folder”) |
 | `guest/layer/` | VM layer over `/usr` (read-only erofs): file-based `splctl`, safe post-install for RAUC, `VARIANT_ID=steamdeck`, gamescope session on DRM, Desktop Mode (Plasma nested in gamescope), masks for Frame hardware services, `fx-progress-agent` progress agent (Rust, `guest/progress-agent/`, `fx.progress` virtio-console port) and its root services (`fx.clock`, `fx.sleep`, the uinput or uhid gamepad on `fx.pad`), short shutdown timeouts, QR-code Steam sign-in mode (Steam Deck client, while there is no remembered account), optional Steam client branch (`/etc/steamac/steam-client-branch`), Steam's background shader processing on by default (`steam-shader-defaults`), Steam's idle screensaver off by default (`steam-idle-screensaver`), reset of fixed system/user manager CPU affinity masks so services inherit the VM’s available vCPUs on the next layer boot |
 | `scripts/` | build of `work/out/steamos.img`: GPT with Valve's partition layout (esp, efi-A/B, rootfs-A/B, var-A/B, home); `scripts/test/provision-test-disk.sh` — dev test of provisioning against a disk from Docker; `scripts/test/vkd3d-tiled.sh` — dev end-to-end check of D3D12 tiled resources and the feature level (vkd3d-proton tests of Proton 11.0, `d3d12-caps`, `vk-minmax`) in a throwaway VM |
 
@@ -1355,7 +1681,9 @@ a format-compatible type and its bits are reinterpreted (`repro/vertex_input.c`)
 through a helper function with an immutable YCbCr sampler no longer fails to compile
 (`is_null_texture`, STEAMAC-3W; `repro/texture_helpers.c`). A texel buffer view of a format Metal has
 no pixel format for fails with `VK_ERROR_FORMAT_NOT_SUPPORTED` instead of aborting the VM process
-(Uncharted, STEAMAC-3Q; `repro/texel_buffer.c`). A failed graphics pipeline logs each stage's entry
+(Uncharted, STEAMAC-3Q; `repro/texel_buffer.c`); a texel buffer view wider than Metal's 2^28 texels fails
+with `VK_ERROR_OUT_OF_DEVICE_MEMORY` instead of aborting in Metal's descriptor validation (STEAMAC-9E/79).
+A failed graphics pipeline logs each stage's entry
 point, shader hash and reflected interface, for link failures and compiler errors that carry no MSL.
 
 The SteamOS root filesystem is not modified: all changes come from initramfs and the layer. Thus
@@ -1407,7 +1735,12 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
 ## Limitations
 
 - DirectX 12 (vkd3d-proton): feature level 12_0 on KosmicKrisp (tiled resources tier 2: sparse binding and
-  residency on Metal 4 placement sparse resources), 11_0 on MoltenVK; SM 6.0 on both (no SM 6.2+ on Apple GPUs).
+  residency on Metal 4 placement sparse resources), 11_0 on MoltenVK; SM 6.0 on both (no SM 6.2+ on Apple GPUs:
+  vkd3d-proton needs both FP32 denormal flush-to-zero and preservation, and Metal does not preserve denormals).
+  virglrenderer logs the SM 6.0 prerequisites and SM 6.2 denormal properties each device reports. Age of
+  Mythology: Retold stops with "Shader model too low (Shader_Model_60)" (STEAMAC-AB/AC/A0); on an M5 Max with
+  KosmicKrisp the launch options `VKD3D_DISABLE_EXTENSIONS= VKD3D_SHADER_MODEL=6_6 %command%` got past this
+  check to the menu; this only overrides the reported shader model, and matches may still exit.
   Within one render pass, depth written to unbound tiles of a sparse depth attachment stays in Apple's tile memory.
   Stellar Blade Demo (UE4) runs at 1280×800, 60 FPS on an M4 Max; the first run spends minutes compiling shaders. The
   x86 emulator in Proton ARM64 (FEX) stopped it once after 20 minutes (DEP check in its protected .exe).
@@ -1423,7 +1756,12 @@ Stutters on the first pass are Metal compilation (~50–100 ms per new pipeline)
   speakers and downmixing missing ones with headroom. Guest channel maps stay fixed for a boot
   (virtio-snd/ALSA cache them): restart the VM to expose more channels or a new layout to games.
   `STEAMAC_SND_DUMP` records guest PCM before speaker mapping. 5.1.2 was tested on hardware, 7.1.4
-  only by automated mapping tests; the microphone stays mono/stereo and has not been tested.
+  only by automated mapping tests; the microphone stays mono/stereo and has not been tested. Microphone
+  capture uses the macOS default input. If microphone permission is denied, no input device is
+  available or CoreAudio does not start within 200 ms, recording fails with an ordinary audio error
+  instead of blocking the VM's sound control queue; playback is independent of capture (STEAMAC-8N/8P:
+  a stuck capture start left the guest's capture buffers outstanding). Capture logs include the input
+  device and microphone permission state.
 - Anti-cheat systems that block VMs will not work.
 - `logicOp` is unavailable (the private Metal API in the MoltenVK fork does not build); zink emits a warning.
 

@@ -81,6 +81,8 @@ final class BootProgress {
     private(set) var state = ProgressState()
     /// State changed (overlay redraw / log line).
     var onChange: ((ProgressState) -> Void)?
+    /// Initramfs failed before the guest progress agent could start; shown once as a window sheet.
+    var onBootFailure: ((_ detail: String) -> Void)?
     /// Steam UI is up (`ready`).
     var onReady: (() -> Void)?
     /// Shutdown started (phase switched to .shutdown).
@@ -155,6 +157,21 @@ final class BootProgress {
             return
         }
         guard state.phase == .boot else { return }
+        guard state.stageId != "boot-failed" else { return }
+        if let fatal = line.range(of: "steamac-init: FATAL: ") {
+            let reason = String(line[fatal.upperBound...])
+            var failed = state
+            failed.stageId = "boot-failed"
+            failed.title = String(localized: "SteamOS could not start")
+            failed.logTitle = "SteamOS could not start"
+            failed.detail = reason
+            if reason.hasPrefix("no partition labelled ") { failed.detail += "\n" + AppBundle.invalidDiskMessage }
+            failed.logDetail = reason
+            failed.indeterminate = false
+            publish(failed)
+            onBootFailure?(failed.detail)
+            return
+        }
         if let r = line.range(of: "steamac-provision: ") {
             provisionLine(String(line[r.upperBound...]))
         } else if let r = line.range(of: "steamac-config: ") {
@@ -181,6 +198,7 @@ final class BootProgress {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true).map(String.init)
         guard let verb = parts.first else { return }
+        if state.stageId == "boot-failed", ["stage", "log", "ready", "provision"].contains(verb) { return }
         switch verb {
         case "stage":
             guard parts.count >= 3, BootProgress.guestStages.contains(parts[1]), let pct = Int(parts[2]),
@@ -261,6 +279,9 @@ final class BootProgress {
             guard parts.count == 3, parts[1].count == 64,
                   parts[1].allSatisfy({ $0.isHexDigit }), ["applied", "pending"].contains(parts[2]) else { return }
             onProfilesOK?(parts[1], parts[2] == "pending")
+        case "profiles-error":   // profiles-error <verb>: <reason> (guest agent, printable ASCII)
+            let reason = String(line.dropFirst("profiles-error".count).prefix(200))
+            log("game profiles: SteamOS refused: " + reason.trimmingCharacters(in: .whitespaces))
         case "game-gfx":
             guard parts.count == 3, let id = Int(parts[1]), id > 0,
                   ["dxmt", "vulkan"].contains(parts[2]) else { return }
@@ -431,10 +452,25 @@ final class BootProgress {
         onChange?(s)
     }
 
-    /// "1920x1200" -> (1920, 1200); nil unless both are positive integers.
+    /// --selftest-settings: guest-supplied sizes stay within the limits.
+    static func limitsSelfCheck() -> [String] {
+        var failures: [String] = []
+        if pixelSize("1280x800").map({ $0 == (1280, 800) }) != true { failures.append("progress: 1280x800 not parsed") }
+        for bad in ["99999999999x1", "0x800", "1280x-1", "\(maxSurfaceSide + 1)x1", "1x\(Int.max)", "1280x"] where pixelSize(bad) != nil {
+            failures.append("progress: surface size \(bad) accepted")
+        }
+        return failures
+    }
+
+    /// Largest surface side accepted from the guest (above any real display; keeps the pointer
+    /// arithmetic that uses it far from Int32 overflow).
+    static let maxSurfaceSide = 16384
+
+    /// "1920x1200" -> (1920, 1200); nil unless both are integers in 1...maxSurfaceSide.
     static func pixelSize(_ s: String) -> (Int, Int)? {
         let v = s.split(separator: "x", omittingEmptySubsequences: false)
-        guard v.count == 2, let w = Int(v[0]), let h = Int(v[1]), w > 0, h > 0 else { return nil }
+        guard v.count == 2, let w = Int(v[0]), let h = Int(v[1]),
+              (1...maxSurfaceSide).contains(w), (1...maxSurfaceSide).contains(h) else { return nil }
         return (w, h)
     }
 
@@ -494,7 +530,8 @@ struct LineSplitter {
 }
 
 /// The `fx.progress` virtio-console port: guest writes lines, the launcher reads them; the
-/// launcher writes requests the other way (`collect-logs <id>`, GuestLogs).
+/// launcher writes requests the other way (`collect-logs <id>`, GuestLogs; `compact-disk <id>`,
+/// DiskCompact).
 final class ProgressPort {
     static let name = "fx.progress"
     /// Handed to libkrun: guest -> host data is written here.

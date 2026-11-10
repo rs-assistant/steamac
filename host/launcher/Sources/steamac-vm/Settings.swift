@@ -31,16 +31,18 @@ final class LauncherSettings: ObservableObject {
         case virtualPad, padType, dualSensePassthrough, controllerID, additionalPads, swapABXY, stickDeadzone
         // Sound
         case soundEnabled, soundOutputUID, soundVolume, soundMute, soundLatency
+        // Streaming
+        case streamingHost
         // Advanced
-        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, steamosBranch, steamClient, vulkanDriver,
-             wmtr, wmtrLibrary
+        case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, sharedMount, sharedLibrary,
+             steamosBranch, steamClient, vulkanDriver, wmtr, wmtrLibrary
 
         var nextStart: Bool {
             switch self {
             case .openFullscreen, .dpiSource, .fixedDPI, .fixedWidthMM, .fixedHeightMM, .refreshRate,
-                 .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .soundEnabled, .cpus, .memMiB, .sshEnabled,
+                 .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .metalHUD, .soundEnabled, .cpus, .memMiB, .sshEnabled,
                  .sshPort, .network, .lanRemotePlay,
-                 .diskImage, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
+                 .diskImage, .sharedFolder, .sharedMount, .sharedLibrary, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
                 return true
             default:
                 return false
@@ -239,14 +241,26 @@ final class LauncherSettings: ObservableObject {
             }
         }
 
-        /// Settings > Advanced, shown after the library path.
+        /// Settings > Advanced, shown after the library path. dlopen runs the library's
+        /// initializers, so each path is probed once per process, not on every render.
         static func localizedUnavailableReason(_ path: String) -> String? {
+            if let known = probed[path] { return known }
+            let reason: String?
             switch problem(path) {
-            case .missing: return String(localized: "cannot be loaded")
-            case .notExecutor: return String(localized: "not a wmtr executor library")
-            case nil: return nil
+            case .missing: reason = String(localized: "cannot be loaded")
+            case .notExecutor: reason = String(localized: "not a wmtr executor library")
+            case nil: reason = nil
             }
+            probed[path] = reason
+            return reason
         }
+        nonisolated(unsafe) private static var probed: [String: String?] = [:]   // main thread only
+
+        /// The app bundle takes only its bundled executor from the settings: a library path in
+        /// the defaults could be written by any process of this user, and the app (library
+        /// validation off, hypervisor and microphone access) would load it. Another executor is
+        /// given on the command line (--wmtr-lib PATH); the dev launcher keeps the setting.
+        static var customFromSettingsAllowed: Bool { !AppBundle.releaseDefaults }
     }
 
     /// Default window size choices (window points = guest pixels).
@@ -309,8 +323,9 @@ final class LauncherSettings: ObservableObject {
     @Published var showStallIndicator = true { didSet { save(.showStallIndicator, showStallIndicator) } }
     @Published var openFullscreen = false { didSet { save(.openFullscreen, openFullscreen) } }
     @Published var perfStats = false { didSet { save(.perfStats, perfStats) } }
-    /// Crash reports and diagnostics through Sentry (CrashReporting); applies now.
-    @Published var sendCrashReports = true { didSet { save(.sendCrashReports, sendCrashReports) } }
+    /// Crash reports and diagnostics through Sentry (CrashReporting); off until the user turns it on.
+    /// Applies now.
+    @Published var sendCrashReports = false { didSet { save(.sendCrashReports, sendCrashReports) } }
     /// While the app is not active: mute the guest's sound / freeze the focused game.
     @Published var muteInBackground = true { didSet { save(.muteInBackground, muteInBackground) } }
     @Published var pauseInBackground = false { didSet { save(.pauseInBackground, pauseInBackground) } }
@@ -343,7 +358,7 @@ final class LauncherSettings: ObservableObject {
     /// The guest display gets the screen's pixel density (backing scale guest pixels per window
     /// point, Options.pixelScale) instead of one pixel per point; next start.
     @Published var retinaResolution = false { didSet { save(.retinaResolution, retinaResolution) } }
-    /// Apple's Metal Performance HUD on the VM window (FPS, frame interval, GPU time, memory); applies now.
+    /// Apple's Metal HUD: enabling loads libMTLHud on the next boot; off hides it now, unloads next boot.
     @Published var metalHUD = false { didSet { save(.metalHUD, metalHUD) } }
     /// MetalFX spatial upscaling of the guest picture to the window's pixel size (Renderer); applies now.
     @Published var superResolution = false { didSet { save(.superResolution, superResolution) } }
@@ -382,8 +397,16 @@ final class LauncherSettings: ObservableObject {
     @Published var network = true { didSet { save(.network, network) } }
     /// Opt-in: exposes Remote Play to the local network, unlike ordinary user-mode NAT.
     @Published var lanRemotePlay = false { didSet { save(.lanRemotePlay, lanRemotePlay) } }
+    /// Opt-in Moonlight host; only the windowed VM process opens its listeners.
+    @Published var streamingHost = false { didSet { save(.streamingHost, streamingHost) } }
     /// "" = default (see AppBundle.defaultDisk()).
     @Published var diskImage = "" { didSet { save(.diskImage, diskImage) } }
+    /// Mac folder exposed to the guest as the virtio-fs device "macshare" (Options.share); "" = none.
+    @Published var sharedFolder = "" { didSet { save(.sharedFolder, sharedFolder) } }
+    /// Where SteamOS mounts it (Options.shareMount; kernel cmdline steamac.share=).
+    @Published var sharedMount = Options.defaultShareMount { didSet { save(.sharedMount, sharedMount) } }
+    /// Register SteamLibrary inside the shared folder on the next start (Options.shareLibrary).
+    @Published var sharedLibrary = true { didSet { save(.sharedLibrary, sharedLibrary) } }
     /// SteamOS update branch "Create New Disk…" installs (atomupd vr/<branch>.json).
     @Published var steamosBranch = "stable" { didSet { save(.steamosBranch, steamosBranch) } }
     /// Steam client of the next start (`steamac.steam_client=`).
@@ -469,7 +492,12 @@ final class LauncherSettings: ObservableObject {
         int(.sshPort, &sshPort)
         bool(.network, &network)
         bool(.lanRemotePlay, &lanRemotePlay)
+        bool(.streamingHost, &streamingHost)
         string(.diskImage, &diskImage)
+        string(.sharedFolder, &sharedFolder)
+        string(.sharedMount, &sharedMount)
+        if !Options.isValidShareMount(sharedMount) { sharedMount = Options.defaultShareMount }
+        bool(.sharedLibrary, &sharedLibrary)
         string(.steamosBranch, &steamosBranch)
         if !DiskCreator.branches.contains(steamosBranch) {
             log("settings: SteamOS branch \(steamosBranch) is not offered; falling back to stable")
@@ -550,7 +578,11 @@ final class LauncherSettings: ObservableObject {
         case .sshPort: guard let i else { return false }; sshPort = i
         case .network: guard let b else { return false }; network = b
         case .lanRemotePlay: guard let b else { return false }; lanRemotePlay = b
+        case .streamingHost: guard let b else { return false }; streamingHost = b
         case .diskImage: diskImage = text == "default" ? "" : text
+        case .sharedFolder: sharedFolder = text == "none" ? "" : text
+        case .sharedMount: guard Options.isValidShareMount(text) else { return false }; sharedMount = text
+        case .sharedLibrary: guard let b else { return false }; sharedLibrary = b
         case .steamosBranch: guard DiskCreator.branches.contains(text) else { return false }; steamosBranch = text
         case .steamClient: guard let v = SteamClient(rawValue: text) else { return false }; steamClient = v
         case .vulkanDriver: guard let v = VulkanDriver(rawValue: text) else { return false }; vulkanDriver = v
@@ -586,7 +618,9 @@ final class LauncherSettings: ObservableObject {
         soundVolume = fresh.soundVolume; soundMute = fresh.soundMute; soundLatency = fresh.soundLatency
         cpus = fresh.cpus; memMiB = fresh.memMiB; sshEnabled = fresh.sshEnabled; sshPort = fresh.sshPort; network = fresh.network
         lanRemotePlay = fresh.lanRemotePlay
-        diskImage = fresh.diskImage; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
+        streamingHost = fresh.streamingHost
+        diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; sharedMount = fresh.sharedMount
+        sharedLibrary = fresh.sharedLibrary; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
         reloadGames()
@@ -617,10 +651,11 @@ final class LauncherSettings: ObservableObject {
             .fixedDPI: dpiSource == .dpi ? fixedDPI : 0,
             .fixedWidthMM: dpiSource == .mm ? fixedWidthMM : 0, .fixedHeightMM: dpiSource == .mm ? fixedHeightMM : 0,
             .refreshRate: refreshRate, .windowWidth: windowWidth, .windowHeight: windowHeight,
-            .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution,
+            .windowSizePreset: windowSizePreset, .retinaResolution: retinaResolution, .metalHUD: metalHUD,
             .soundEnabled: soundEnabled, .cpus: cpus, .memMiB: memMiB, .sshEnabled: sshEnabled, .sshPort: sshPort,
             .network: network, .lanRemotePlay: lanRemotePlay,
-            .diskImage: diskImage, .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
+            .diskImage: diskImage, .sharedFolder: sharedFolder, .sharedMount: sharedMount, .sharedLibrary: sharedLibrary,
+            .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
             .vulkanDriver: vulkanDriver.rawValue, .wmtr: wmtr, .wmtrLibrary: wmtrLibrary,
         ]
         var s: [Key: String] = [:]
@@ -677,10 +712,21 @@ final class LauncherSettings: ObservableObject {
         reloadGames()
     }
 
-    /// `game <appid> <name>` from the guest agent.
-    func setGameName(_ name: String, for appid: Int) {
+    /// Limits for guest-supplied game names (stored in the defaults, shown in Settings and alerts).
+    static let gameNameMax = 128, gameNamesMax = 2000
+
+    /// `game <appid> <name>` from the guest agent: control characters removed, length and number
+    /// of remembered games capped.
+    func setGameName(_ raw: String, for appid: Int) {
+        let name = String(String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
+            .trimmingCharacters(in: .whitespaces).prefix(Self.gameNameMax))
+        guard !name.isEmpty else { return }
         var names = defaults.dictionary(forKey: Key.gameNames.rawValue) as? [String: String] ?? [:]
         guard names[String(appid)] != name else { return }
+        guard names[String(appid)] != nil || names.count < Self.gameNamesMax else {
+            log("settings: not remembering the name of game \(appid): already \(names.count) games")
+            return
+        }
         names[String(appid)] = name
         defaults.set(names, forKey: Key.gameNames.rawValue)
         reloadGames()

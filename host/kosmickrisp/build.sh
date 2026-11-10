@@ -371,6 +371,42 @@
 #              hash, group/local sizes, or indirect address and local size. GPU counts are never read on
 #              the CPU; no dispatch changes. host/moltenvk/repro/gpu-diagnostics.sh checks both (eight
 #              direct/indirect readback cases under Metal validation, device-loss reporting).
+#   0087       steamac: validate the in-flight fault window too (STEAMAC-G). 1.9.9 event 048177a5 had a
+#              stale GPU start 43.7 hours before commit: 0085 rejected its duration, but peer selection
+#              still printed 24 records and hid another 80. Invalid starts now use commit as the window's
+#              lower bound, and peer timestamps are checked against their own commit/feedback before
+#              overlap or offsets are printed; failed/pending records are never dropped. No GPU behavior
+#              change; the standalone diagnostics regression reproduces the false overlap with 0085
+#              alone and excludes it with 0087.
+#   0088       steamac: explicitly external host-memory OPTIMAL images use bounded LINEAR backing,
+#              so two devices importing the same shared pages see the same pixels (#58). Ordinary
+#              host-visible imports keep 0016's private heap. Queries advertise the linear limits.
+#              Temporary workaround while Willie Abrams tracks mesa!44929 upstream; drop on upstream fix.
+#              virglrenderer must preserve the host external-image marker. Repro: shared_image.c.
+#   0089       steamac: opt-in MESA_KK_DEBUG=syncs traces shared-event lifetimes, CPU/GPU signals, queue
+#              submits/commits and waits. CPU waits past one second retain target/current values,
+#              pending workloads and unsignalled GPU waits before any Metal failure callback
+#              (STEAMAC-94). Original absolute deadlines remain; tracing off leaves the wait path
+#              unchanged. Diagnostic, not an Ori hang fix: BC3/ASTC 64..512 mip upload stress completes
+#              on M1 Max. Regressions: test/sync-diagnostics.py <Mesa src> and
+#              REPRO_CASE=sentry-94-uploads REPRO_DRIVER=kosmickrisp host/moltenvk/repro/run.sh <dylib>.
+#   0090       steamac: materialize deep MSL selection predicates instead of nesting braces past depth
+#              128; SSA/ALU results already use temporaries. STEAMAC-G event 949d5c67 (1.9.12, M4 Pro)
+#              reports Metal's "bracket nesting level exceeded maximum of 256" at column 1025 before
+#              SetReply's invalid res_id. A 320-case divergent selection ladder and a deep then-tree
+#              reproduce that exact error/column on M1 Max. Descendant blocks become guarded siblings
+#              with snapshotted then/else predicates; real loops and jump targets stay intact.
+#              Repro: sentry-g-brackets.sh (384 divergent invocations, all 387 output words checked;
+#              nested loops, break/continue/return, post-if merges, a 2048-operation ALU control).
+#              The event's MSL was not retained, so its exact shader shape is not claimed.
+#   0091       steamac: skip vkCmdCopyBuffer[2] with NULL source/destination buffer handles, with at
+#              most two warnings per process. STEAMAC-9S/9T (Dota 2, M4, 1.9.13) fault at
+#              kk_CmdCopyBuffer2+80: the matching dylib UUID's instruction loads destination->metal at
+#              +0x68 from x22=0; the source VkBuffer and its Metal buffer are non-NULL. Only invalid
+#              NULL handles are skipped, before acquiring an encoder; non-NULL operands, including
+#              unbound sparse buffers, keep the existing path. Repro: test/copy-buffer-null.py <dylib>
+#              (six NULL-source/destination/both cases crash before; after, 1024 calls per case log
+#              once, then a valid copy succeeds; dense and unbound-sparse controls pass before/after).
 #
 # Two meson builds: (1) the host compiler tools mesa_clc + vtn_bindgen2 against Homebrew LLVM
 # (shared) and SPIRV-LLVM-Translator, installed into work/build/host-kosmickrisp/clc; (2) the driver
@@ -473,16 +509,21 @@ PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 meson setup "
 PATH="$clc/bin:$work/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=26.0 ninja -C "$work/build"
 built=$work/build/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib
 
+# test_cc <shell-quoted flags> <args...>: xcrun clang with util-cflags.py's flags (already quoted
+# with shlex.quote) in front of the arguments, which are passed as they are, so paths with spaces
+# in them stay intact (eval re-splits only the quoted flags).
+test_cc() { _flags=$1; shift; eval "set -- $_flags \"\$@\""; xcrun clang "$@"; }
+
 # --- Mesa util regression on macOS: util_queue_finish over the mutex/condvar barrier fallback (0077)
 uqf=$work/util_queue_finish
-eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build") \
+test_cc "$("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build")" \
 	"$here/test/util_queue_finish.c" "$work/build/src/util/libmesa_util.a" \
 	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$uqf"
 "$uqf"
 
 # --- NIR serialization of shaders with more than 2^20 objects (0080)
 noi=$work/nir_object_ids
-eval xcrun clang $("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build" src/compiler/nir/nir_serialize.c) \
+test_cc "$("$work/venv/bin/python3" "$here/test/util-cflags.py" "$work/build" src/compiler/nir/nir_serialize.c)" \
 	"$here/test/nir_object_ids.c" "$work/build/src/compiler/nir/libnir.a" "$work/build/src/compiler/libcompiler.a" \
 	"$work/build/src/util/libmesa_util.a" "$work/build/src/util/blake3/libblake3.a" \
 	"$work/build/src/c11/impl/libmesa_util_c11.a" -lz -lpthread -framework CoreFoundation -o "$noi"
@@ -593,6 +634,11 @@ mv -f "$lib.tmp.$$" "$lib"
 	echo "  0083 = steamac: bounded timestamp-resolve operand diagnostics (STEAMAC-7R)"
 	echo "  0085 = steamac: validate failed command-buffer GPU timestamps before reporting durations (STEAMAC-G)"
 	echo "  0086 = steamac: retain largest direct and last indirect dispatch for GPU-failure logs (STEAMAC-G)"
+	echo "  0087 = steamac: validate the in-flight fault window against commit/feedback clocks (STEAMAC-G)"
+	echo "  0088 = steamac: explicitly shared host-memory images use imported pages (temporary mesa!44929 workaround, #58)"
+	echo "  0089 = steamac: opt-in MESA_KK_DEBUG=syncs traces queue synchronization and CPU waits past 1 s (STEAMAC-94)"
+	echo "  0090 = steamac: materialize deep MSL selection predicates past depth 128 (Metal's 256 bracket limit, STEAMAC-G)"
+	echo "  0091 = steamac: skip vkCmdCopyBuffer[2] with NULL buffer handles, bounded warning (STEAMAC-9S/9T)"
 	echo
 	echo "Known gaps (host/moltenvk/repro/run.sh): transform feedback with strip geometry shaders and"
 	echo "the overflow counter (draft !44928)."

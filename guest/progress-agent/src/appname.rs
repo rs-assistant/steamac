@@ -20,7 +20,7 @@ pub struct Names {
 
 impl Names {
     pub fn new(steam_root: PathBuf, marker: PathBuf) -> Names {
-        let named = std::fs::read_to_string(&marker).ok().map(|text| {
+        let named = crate::read_marker(&marker).map(|text| {
             let mut lines = text.lines();
             if lines.next().map(str::trim) == Some(crate::boot_id().as_str()) {
                 lines.filter_map(|line| line.trim().parse().ok()).collect()
@@ -42,7 +42,7 @@ impl Names {
             for id in &self.named {
                 marker.push_str(&format!("\n{id}"));
             }
-            let _ = std::fs::write(&self.marker, marker);
+            crate::write_marker(&self.marker, &marker);
         }
     }
 }

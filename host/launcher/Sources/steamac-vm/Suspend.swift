@@ -59,6 +59,9 @@ final class SuspendController: NSObject, NSMenuDelegate {
     private var sleepToken: String?
     /// Woken, its sleep job not over yet (`awake <token>` pending): actions that need logind.
     private var wakingToken: String?
+    /// fx.sleep lines that only get logged (stale, unknown, refused requests): the guest sets
+    /// their rate, so at most a few per minute reach the log.
+    private let sleepLines = LogLimiter("sleep: fx.sleep lines")
     private var afterWake: [() -> Void] = []
     /// Longest the "Resuming…" chip waits for a guest frame.
     static let chipTimeout: TimeInterval = 2.5
@@ -236,25 +239,27 @@ final class SuspendController: NSObject, NSMenuDelegate {
         case "sleep" where w.count >= 3:
             guestRequestedSleep(action: w[1], token: w[2], allowed: allowed)
         case "awake" where w.count >= 2:
-            guard w[1] == wakingToken else { return log("sleep: stale \"\(line)\" ignored") }
+            guard w[1] == wakingToken else { return sleepLines.write("sleep: stale \"\(guestSnippet(line))\" ignored") }
             log("sleep: the guest finished its sleep job")
             wakingToken = nil
             DispatchQueue.main.asyncAfter(deadline: .now() + SuspendController.awakeSettle) { [weak self] in
                 self?.runAfterWake()
             }
         default:
-            log("sleep: unknown line \"\(line)\" on fx.sleep")
+            sleepLines.write("sleep: unknown line \"\(guestSnippet(line))\" on fx.sleep")
         }
     }
 
-    private func guestRequestedSleep(action: String, token: String, allowed: Bool) {
+    private func guestRequestedSleep(action guestAction: String, token: String, allowed: Bool) {
+        // Logged and shown as the pause origin: the guest's word, cut to a sane length.
+        let action = guestSnippet(guestAction, limit: 40)
         if asleep {
             // A new request while paused cannot happen (no vCPU runs); answer it with the next wake.
             sleepToken = token
             return
         }
         guard allowed, !suspended, let wc = window, pauseVM("sleep", origin: "guest \(action)") else {
-            log("sleep: guest asked to \(action); not now, woken at once")
+            sleepLines.write("sleep: guest asked to \(action); not now, woken at once")
             if sleepPort?.sendWake(token: token) == true { expectAwake(token) }
             return
         }

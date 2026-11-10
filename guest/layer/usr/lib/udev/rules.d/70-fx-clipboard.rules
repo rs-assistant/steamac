@@ -1,5 +1,10 @@
 # steamac: the launcher's virtio-console port "fx.clipboard" (the clipboard
 # shared with the Mac) is opened by the session user's fx-clipboard-agent.service.
 # The /dev/virtio-ports/fx.clipboard symlink comes from systemd's stock
-# 50-udev-default.rules.
-SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.clipboard", MODE="0666"
+# 50-udev-default.rules. Only that user ("steamos", SteamOS's session user) and
+# root may open it, so other local users cannot read or set the Mac clipboard.
+# Access: OWNER= covers systemd <= 257; systemd 258 resolves OWNER= only for root and
+# system users and ignores "steamos" (a regular user). TAG+="uaccess" (applied by
+# 73-seat-late.rules) adds an ACL for the active session's user on seat0 in every
+# version, and logind moves it with the active session; root keeps access either way.
+SUBSYSTEM=="virtio-ports", ATTR{name}=="fx.clipboard", OWNER="steamos", MODE="0600", TAG+="uaccess"

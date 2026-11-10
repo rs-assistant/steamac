@@ -22,7 +22,7 @@ Metal 4 上的 Vulkan 驱动）是 macOS 26+ 上的实验性替代（见“Vulka
 - KosmicKrisp（可选，替代 Vulkan 驱动）：仅在 macOS 26+ 上构建；`host/kosmickrisp/build.sh`
   会安装其 Homebrew 依赖（`llvm spirv-llvm-translator spirv-tools vulkan-loader glslang`）。
 - OrbStack（或 arm64 且带 `--privileged` 的 Docker）：内核、Mesa 和磁盘映像在 Linux 容器中构建。
-- Homebrew 包：`meson ninja pkg-config dtc xz lld sshpass go`（`go`：用于捆绑的 gvproxy/desync 的许可证清单）。
+- Homebrew 包：`meson ninja pkg-config dtc xz lld sshpass go`（`go`：用固定版本的 Go 工具链从源码构建捆绑的 gvproxy/desync（`host/launcher/build-go-tool.sh`），并生成其许可证清单）。
 - libepoxy 1.5.10 由 `host/libepoxy/build.sh` 从锁定源码构建，先于 virglrenderer 和
   libkrun；三者均使用 `MACOSX_DEPLOYMENT_TARGET=15.0`，包括在 macOS 26/27 构建机上。
   打包会拒绝 Mach-O 部署目标高于 macOS 15.0 的文件（仅 KosmicKrisp 可要求 26.0）。
@@ -152,7 +152,7 @@ gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换�
 |---|---|
 | Ctrl+Cmd+F | 全屏（macOS 开启游戏模式：Info.plist 声明为游戏——`LSApplicationCategoryType` `public.app-category.games`、`GCSupportsGameMode`、`LSSupportsGameMode`；`gamepolicyd` 记录 “Game mode status is now on”） |
 | Ctrl+Cmd+G | 手动捕获 / 释放鼠标 |
-| Ctrl+Cmd+P | Apple Metal 性能 HUD 开关（FPS、帧间隔、GPU 时间、内存）；另见 显示 → 显示 Metal 性能 HUD（Ctrl+Cmd+P） 与 设置 > 显示 |
+| Ctrl+Cmd+P | Apple Metal 性能 HUD 开关（FPS、帧间隔、GPU 时间、内存）；另见 显示 → 显示 Metal 性能 HUD（Ctrl+Cmd+P） 与 设置 > 显示。只有虚拟机启动时 HUD 已开启才会加载其库：开启需重启后生效，关闭会立即隐藏，并在下次重启时卸载。Apple 的 HUD 曾在 macOS 26 上使用 KosmicKrisp（Metal 4）时导致虚拟机崩溃，即使覆盖层已隐藏（STEAMAC-59/7K/7Q/9X/9Y），因此在使用 KosmicKrisp 时开启 HUD 会要求确认；不使用 Apple HUD 的替代方式是 设置 > 通用 > 记录帧节奏统计，记录客户机显示时序（不是游戏 FPS）。崩溃报告包含请求与实际生效的 HUD 状态、是否注入了 HUD 库以及驱动信息 |
 | Ctrl+Option | 释放已捕获的鼠标 |
 | 关闭窗口 | 关闭客户机（电源键） |
 
@@ -176,7 +176,8 @@ gamescope 会话中（游戏模式与桌面模式）：会话结束时（切换�
 
 SSH 一键开关：**设置 → 高级 → 启用 SSH**（或 `--ssh-port N` /
 `--no-ssh`）。每次启动时启动器传递 `steamac.ssh=0|1`：为 0 时 Mac 上根本不开端口
-（无转发的 gvproxy），initramfs 在 SteamOS 中屏蔽 sshd。开发版启动器（`work/out/steamac-vm`、`./run.sh`，端口 2222）默认开启，
+（无转发的 gvproxy），initramfs 在 SteamOS 中屏蔽 sshd；
+未传该参数（或值无效）时 initramfs 同样关闭 SSH。开发版启动器（`work/out/steamac-vm`、`./run.sh`，端口 2222）默认开启，
 `FX Steam Launcher.app` 默认关闭（Info.plist 中 `SteamacReleaseDefaults` 键，由 `bundle.sh` 设置）。开启后，
 启动器为 `steamos` 用户生成密码（20 字符，SecRandomCopyBytes），
 按磁盘 GPT GUID 分别存于钥匙串，下次启动只把其 SHA-512 crypt 哈希传给客户机（“配置载荷”盘，`steamac.config=1`；客户机回复
@@ -189,13 +190,14 @@ SSH 一键开关：**设置 → 高级 → 启用 SSH**（或 `--ssh-port N` /
 
 普通联网走 gvproxy 用户态 NAT（SteamOS 中 `192.168.127.2`）；局域网广播过不了该 NAT。**设置 → 高级 → 局域网 Remote Play**（下次启动生效）或
 `--lan-remote-play` 启用启动器侧发现中继与同端口转发：
-Mac 到客户机的 UDP **27031–27036**、TCP **27036–27037**。默认**关闭**：
+Mac 到客户机的 UDP **27031–27036**、TCP **27036–27037**。转发只监听 Mac 的局域网（支持广播的 IPv4）地址，
+不含回环与 VPN 隧道，并在虚拟机运行期间随地址变化更新。默认**关闭**：
 开启会把 Steam 的 Remote Play 服务暴露给其他机器，与 SSH 无关。
 `--no-lan-remote-play` 单次启动关闭；网络关闭则一并关闭。
 
 允许 macOS 的**本地网络**权限，并在 Mac/SteamOS 防火墙放行入站。
 Steam Link 与 Mac 须在**同一 IPv4 子网**（Wi-Fi 客户端隔离、访客网络、VLAN、路由发现与纯 IPv6 局域网不受支持）。在客户机 Steam 中启用 Remote Play；
-手动配对请用 Mac 的局域网地址，而非 `192.168.127.2`。
+手动配对请用 Mac 的局域网地址，而非 `192.168.127.2`。Steam Link 无法唤醒休眠中的 SteamOS：重新连接前请通过 Mac 窗口、Dock 图标或控制器唤醒它。带启动器日志的报告包含中继状态与计数、gvproxy 当前转发与日志，以及客户机的地址、路由和监听端口（STEAMAC-9G）。
 若 Mac 本机 Steam 客户端占用这些端口请先退出：启动器从不共享或抢占
 UDP 27036，冲突记为 `remote-play: disabled for this boot` 并回滚转发。
 Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
@@ -210,6 +212,33 @@ Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
 协议参考：[Valve Remote Play 网络设置](https://help.steampowered.com/en/faqs/view/3E3D-BE6B-787D-A5D2)、
 [Steam 远端 protobuf](https://github.com/SteamDatabase/Protobufs/blob/master/steam/steammessages_remoteclient_discovery.proto)、
 [发现包封帧](https://github.com/OpenSourceLAN/steam-discover/blob/master/listener.js)。
+
+## Moonlight 串流
+
+**设置 → 串流 → 启用 Moonlight 串流**立即开启内置 GameStream 主机；
+默认**关闭**，仅在窗口模式的虚拟机进程中可用。在可信局域网中的另一台设备上安装
+[Moonlight](https://moonlight-stream.org/)，允许 macOS 的**本地网络**权限和入站连接，
+在 Moonlight 中选择此 Mac（也可手动添加 Mac 的局域网地址）。将设备显示的四位 PIN
+输入 Mac 上的配对窗口，然后在 Moonlight 中启动 **SteamOS**。
+
+“串流”标签页显示主机/会话状态、已配对设备和配对日期。**撤销访问权限**会删除设备权限并结束
+其当前串流，下次连接须重新配对。**结束串流**断开当前会话但保留配对。关闭串流会停止监听
+并结束会话。虚拟机挂起或 SteamOS 睡眠也会停止串流和监听；恢复后，若设置仍开启则恢复监听。
+客户端串流期间，启动器的后台暂停游戏设置不会冻结游戏。
+
+启用时 Mac 监听 TCP **47984、47989**；会话使用 TCP **48010** 和 UDP **47998–48000**；
+Bonjour 发现使用 **_nvstream._tcp**。不要将这些端口暴露到公网。此功能与
+**高级 → 局域网 Remote Play** 独立，不需要 Steam Link、客户机 Steam Remote Play 或虚拟显示器。
+
+串流内容为客户机画面（包括可见的 DXMT 游戏层）和客户机播放音频，不含 Mac 桌面、
+启动器叠加层或麦克风。使用 H.264 / 硬件支持的 HEVC 和 Opus，无需屏幕录制权限或音频回环驱动。
+Moonlight 请求的分辨率暂时接管客户机显示尺寸（偶数且不超过虚拟机上限），结束后恢复窗口尺寸；
+若关闭“客户机显示跟随窗口大小”，则恢复先前的客户机分辨率。
+同时仅支持一个串流客户端。键盘、鼠标、触摸转鼠标和控制器与本地输入共同操作同一个运行中的客户机。
+会话期间，Moonlight 控制器优先于 Mac 控制器占用 SteamOS 的前几个玩家槽位；
+若关闭**其他控制器**，Mac 控制器会等待串流结束。结束后 Mac 控制器恢复原来的玩家槽位。
+不宣告 HDR、原生笔/触摸或视频加密支持，请在可信局域网中使用。
+`--selftest-stream` 无需启动虚拟机即可运行协议及媒体组件检查。
 
 ## 设置窗口
 
@@ -226,7 +255,7 @@ Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
 | 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，其余控制器是否成为玩家 2–4，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
 | 声音 | 输出设备（系统默认跟随 macOS，或指定 CoreAudio 设备），音量/静音，低（10 毫秒）/普通（20 毫秒）/稳定（60 毫秒）缓冲——经 `krun_snd_set_*`（`dlsym` 查找；旧 libkrun 下字段置灰并说明） | 声音（`--no-sound`） |
 | 游戏 | **共享游戏统计**（同意前关闭，见“游戏统计”）；已知游戏及已记录会话的游戏：单独配置（图形、Vulkan 驱动、启动选项，见下文）、会话数、游玩时间、上次会话的 FPS / 1% low / 游戏内存 / Vulkan 驱动、可选的个人评价（运行良好 / 可玩但有问题 / 能启动但无法游玩 / 无法启动）与每款游戏的**共享**开关 | 配置可能需要重启 Steam 或虚拟机（见下文） |
-| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”） |
+| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + SteamOS 中的挂载点 + 用作 Steam 库（`--share`、`--share-mount`、`--no-share`、`--share-library`、`--no-share-library`，见“共享文件夹”） |
 
 **虚拟机内存与图形共享 Mac 的内存。** 自动分配的虚拟机内存为物理内存的一半（4–16 GiB）。
 每次启动还会为 macOS、其他应用和驱动开销预留至少 3 GiB 或宿主内存的四分之一，
@@ -252,9 +281,17 @@ home 容量在创建磁盘时固定。**设置 → 高级 → 扩展磁盘…** 
 exFAT 立即分配全部新增容量，故先检查其空闲空间。终端（SteamOS 停止时）：
 `work/out/steamac-vm --grow-disk /path/to/steamos.img --home-gib 128`。
 
+**回收 Mac 上的空间：** 卸载游戏（或大幅扩容）后，稀疏的 `steamos.img` 在磁盘上仍可能很大，
+尽管 SteamOS 已不再需要那些块。**设置 → 高级 → 回收磁盘空间…**（需 SteamOS 运行中）让客户机对
+`/home`（以及已挂载的 `/var`）执行 `fstrim`；virtio-blk DISCARD 在 Mac 映像上打洞。容量不变——
+**仅当映像位于 APFS 上时**，已分配大小才可能下降。HFS+ 和 exFAT 无法以此方式回收空间；
+启动器会在开始前检查卷。APFS 克隆和快照可能仍保留已释放的块，因此 Mac 的可用空间不一定
+增加同样的数量。这不是缩小 GPT/home（仍只增不减）。
+
 测试用：`STEAMAC_DEFAULTS_DOMAIN=<domain>` 替换设置域；`--selftest-settings
 --selftest-out DIR` 无虚拟机打开窗口并为每选项卡写 PNG；`--control-fifo` 支持
 `settings TAB`、`settings-dump PNG`、`set KEY VALUE`（与窗口等效）、`restart`。
+`--control-fifo` 是开发用钩子：正式版应用（`SteamacReleaseDefaults`）会忽略它。
 
 ### 单独配置游戏
 
@@ -264,7 +301,7 @@ KosmicKrisp / MoltenVK（仅提供可用的驱动）；**启动选项**——放
 `NAME=value`，不接受任意 shell 命令。整串不超过 256 个字符。变量名以 `VKD3D_`、`DXVK_`、
 `PROTON_`、`WINE_`、`MESA_`、`RADV_`、`VK_`、`DXMT_`、`MTL_`、`STEAMAC_` 开头，
 后接零个或多个 `[A-Z0-9_]` 字符；值匹配 `[A-Za-z0-9_.,:;+-]*`（允许空值）。
-赋值按变量名排序，同名时最后一个生效。无效输入会保留并显示错误，不会保存或发送。
+赋值按变量名排序，同名时最后一个生效。无效输入会保留并显示错误，不会保存或发送。字段为空表示该配置不添加任何覆盖（字段中不再显示看似强制值的 `VKD3D_CONFIG=dxr` 示例，STEAMAC-8X）。Metal Performance HUD 显示的是 Mac 的 drawable 尺寸，可能与游戏的渲染分辨率不同。
 
 **推荐：… — 应用**从统计服务获取配置，使用本机的**我的 Mac**限制（GPU 核心数、内存及性能核心数
 均不高于本机）。按 `(运行良好 + 0.5 × 可玩但有问题) / 全部评价` 排名，再比较更高的启动成功率、
@@ -355,6 +392,8 @@ proc on /newroot/proc: Operation not permitted` 退出。
 与 PNG 图片可粘贴到 SteamOS（Ctrl+V——Steam 文本框、游戏与桌面模式应用），反向亦可；文本上限 1 MiB、单图 16 MiB（超限跳过并记日志）。密码管理器标为隐藏或临时
 （`org.nspasteboard.ConcealedType` / `TransientType`）的内容保留在 Mac，除非开启**包含隐藏（密码管理器）内容**。启动器只在应用活跃且虚拟机运行时每 0.5 秒检查粘贴板
 `changeCount`，每次激活检查一次——后台、挂起或睡眠时从不检查；SteamOS 来的图片落在 Mac 上为 PNG + TIFF。
+只有应用处于活动状态时 SteamOS 才能替换 Mac 剪贴板：应用在后台（或 VM 暂停）时在 SteamOS 中的复制会先保留，
+下次激活时再应用；若期间 Mac 剪贴板已变化，则以较新的 Mac 内容为准并发往 SteamOS。
 
 传输：virtio-console 端口 `fx.clipboard`，定帧二进制消息（`HELLO` / `STATE` /
 带序号 `SET` / `ACK`；`host/launcher/Sources/steamac-vm/Clipboard.swift`、
@@ -367,6 +406,59 @@ gamescope、KWin 或 Klipper 重复宣告多少次。显示器出现时已有的
 Klipper 恢复的历史）不发往 Mac；共享内容改为在 Mac 侧提供。
 `--control-fifo` 有 `chord KEYCODE ctrl`（如 `chord 9 ctrl` = 客户机中 Ctrl+V）与
 `set shareClipboard on|off`。
+
+## 共享文件夹
+
+**设置 → 高级 → 共享文件夹**（下次启动生效）把一个 Mac 文件夹作为标签为 `macshare` 的 virtio-fs 设备提供给
+SteamOS，每次启动时挂载到 **SteamOS 中的挂载点**（默认 `/home/steamos/MacShare`）。文件就地读写，不复制：
+存放在 Mac 上的游戏以 Mac 磁盘的速度加载，SteamOS 写入的内容立即出现在 Mac 上。默认关闭（未选择文件夹）。
+命令行：`--share DIR`、`--share-mount PATH`，`--no-share` 仅本次启动。
+
+选择共享文件夹后，**用作 Steam 库**默认开启（下次启动生效）。SteamOS 会在 Steam 启动前创建
+**`<挂载点>/SteamLibrary/steamapps`**，并注册 `<挂载点>/SteamLibrary`，无需在桌面模式使用
+无响应的“添加驱动器”对话框。在 Steam 的存储设置和安装位置选择器中，它是名为 **Mac Share** 的
+第二个库，而不是需要格式化的 Deck 可移动磁盘。`--share-library` / `--no-share-library` 仅覆盖
+本次启动；关闭后不会删除文件，也不会移除已注册的库。
+
+注册对**每个客户机库路径只进行一次**。之后在 Steam 中移除库会被尊重，即使切换到其他共享后再切回来。
+标记为 `~/.local/share/Steam/config/steamac-share-library.json`（在 `config.vdf` 旁）；
+如需自动重新注册已移除的路径，请先停止 Steam，再从标记中删除该路径。仅更换 Mac 文件夹而保留
+相同的客户机挂载路径不会重新注册。
+
+**文件系统：推荐 APFS。** Proton 将 Windows 前缀存入每个库的 `steamapps/compatdata`，这需要
+符号链接，而不只是可写的游戏文件。钩子以 `steamos` 身份在实际挂载的共享中尝试创建并读取符号链接，
+失败时跳过注册（包括不支持符号链接的 exFAT）。Mac OS Extended/HFS+ 支持符号链接，不会因文件系统
+名称被排除。已在虚拟机中检查 APFS virtio-fs 的读写、chmod，以及 Proton 11 ARM64 前缀的
+`dosdevices/c:` / `z:` 符号链接。普通不区分大小写的 APFS 在 Linux 中仍不区分大小写：需要仅大小写
+不同的文件名的游戏应使用区分大小写的卷或虚拟机内部库。此功能不会把 Mac/Windows Steam 库转换为
+Linux 库；请为 SteamOS 使用单独的文件夹。
+
+实现：`steam-share-library` 是 `steam.service` 的非阻塞 `ExecStartPre`，由与 `steamac.share=PATH`
+一起传入的 `steamac.share_library=1` 启用。它在修改任何文件前通过 `findmnt -t virtiofs` 检查
+**准确的挂载点**。已测试的 Deck 客户端（1792618285）优先读取
+`~/.local/share/Steam/steamapps/libraryfolders.vdf`，缺失时回退到 `config/libraryfolders.vdf`，
+并将两者重写为相同副本。钩子原子更新主文件，保留已有编号条目（或导入旧文件），只设置 `path` 和
+`label`。Steam 自行分配 `contentid`、测量 `totalsize`、填充 `apps`，不写入猜测的 ID 或安装记录。
+先前注册的共享缺失时，Steam **保留条目，但记录“Install folder … not mounted”**，共享恢复前不能用作
+安装位置。此时钩子不修改列表或标记，也不会在客户机磁盘上创建替代库。请先连接外置卷再启动虚拟机；
+如果启动时未连接，请连接后重启。
+
+启动器通过 `krun_add_virtiofs4` 添加设备（`KRUN_SEMANTICS_LINUX_SIMPLIFIED`：客户机在每个文件上看到自己的
+uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗口），并在内核命令行传入
+`steamac.share=PATH`。initramfs（“shared folder” 一节）检查路径——`/home/steamos/` 的子目录，
+无空组件、`.` 或 `..`，仅 `[A-Za-z0-9/_.-]`——并写入运行时挂载单元
+（`/run/systemd/system/<path>.mount`，`What=macshare`、`Type=virtiofs`、`TimeoutSec=15`），由
+`multi-user.target` wanted。它依赖并等待 `steamos-create-homedir.service`，在用户会话之前挂载：
+新磁盘上必须先让 SteamOS 创建并填充用户主目录，再让 systemd 创建挂载点，否则主目录会属于 root，
+且跳过模板复制。`DefaultDependencies=no` 取消在 `local-fs.target` 之前的隐式顺序（主目录创建较晚），
+同时保留关机时的正常卸载顺序。共享挂载失败不阻止启动。该单元仅在本次启动期间存在，与运行时单元屏蔽相同。
+启动时不存在的文件夹（外置硬盘已拔出、已改名）会记入日志并跳过——启动器不带共享启动；
+只有显式的 `--share` 才会拒绝启动。设置中该行以红色显示为未找到。
+
+**安全。** 按 libkrun 的安全模型，virtio-fs 不会把客户机限制在共享目录内：在 macOS 上 lookup 不过滤 `..`，
+启动器也未沙箱化。设置了共享后，SteamOS 中的 root（在其中取得 root 的任何东西：游戏、Flatpak、Proton
+漏洞）可能读取你的 Mac 用户能读取的任何内容，并写入该用户能写入的位置。仅与你信任的 SteamOS 共享，不需要时
+关闭共享。与 SSH 无关。
 
 ## 控制器
 
@@ -389,7 +481,7 @@ macOS GameController 框架支持的任何控制器（Xbox、DualSense、DualSho
 分别按下并松开按钮后提交报告。启动器日志记录 GameController 是否提供 Home、系统手势绑定、
 按钮及配置文件回调，以及事件是否进入客户机手柄端口队列；`pad state` 也包含 Home 当前状态。
 这些信息用于区分 Mac 输入处理与客户机传递故障，不能将所有蓝牙故障都归因于 DualSense
-直通（DualShock 4 使用虚拟手柄）。
+直通（DualShock 4 使用虚拟手柄）。`pad state` 以及包含启动器日志的问题报告中的 `controllers.txt` 还列出被动的 HID 清单（ID、名称、传输方式、usage 以及每个设备是否被路由及原因；被排除的设备不会被打开，也不请求“输入监控”权限），以及 DualSense 摇杆、原始运动传感器和触摸的最新快照及其时间（STEAMAC-8R/8V）。
 
 **振动。** 手柄带 `FF_RUMBLE`，如真实驱动，SDL 与 Steam 可驱动振动——经 Steam Input 的游戏经 Steam 虚拟 Xbox 手柄触达。uinput 把回放交给用户态驱动：`fx-pad` 实现内核 ff-memless 规则（延迟、时长、重复、重载、效果叠加）并向启动器发送合成等级 `rumble <strong> <weak>`，启动器用 GameController 触觉播放：强电机左手、弱电机右手（无分 TW 电机的控制器 whole one level）；虚拟机挂起期间无振动。端口协议：`guest/progress-agent/src/pad.rs`。触摸板、陀螺仪、光条与自适应扳机是真实控制器的 HID 功能，该 evdev 设备没有。
 
@@ -403,11 +495,44 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
+**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 未发布的 Generic Desktop
+设备（usage page 1，Joystick 4、Game Pad 5）按其本身直通，
+例如 DJI FPV Remote Controller 2（`2ca3:1020`）和 Spektrum SLT6（`35cf:04fb`）。
+默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。
+现有 raw-HID/uhid 路径保留描述符、ID 和报告，由客户机的 `hid-generic`、SDL 和 Steam
+处理布局与校准。这不是 Xbox 模拟：请在 SteamOS/Steam Input 中设置，而不是使用启动器的
+GameController 实时测试、A/B 互换或死区设置。需要支持 `caps hid` 的新版客户机层。
+
+设备与 GameController、Steam Controller 共享四个玩家位置，取得编号最低且客户机服务支持
+HID 的可用空位（玩家 2–4 需启用**更多控制器**）。空闲位置保持不变，但 GameController
+控制器优先：通用 HID 会让出位置并移到下一个空位，没有空位则等待。蓝牙 LE Steam Controller
+仍保留固定位置，不会被挤走。旧客户机没有 `caps hid` 时，通用 HID 不预留位置，
+也不能唤醒暂停的虚拟机。
+关闭**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
+即可停止通用 HID 的发现与直通。`pad state` 会列出名称、VID/PID、registry ID 和玩家位置。
+
+为避免重复输入，只有 `GCController.supportsHIDDevice` 为 true（按 HID registry ID 缓存），
+**且** `GCController.controllers()` 中确实存在已发布的控制器，其 `vendorName` 或
+`productCategory` 与 HID 的 product、manufacturer 或“manufacturer product”完全匹配时，
+才认为通用 HID 归 GameController 管理。匹配忽略大小写，并将连续空白归一为空格。
+公开 API 无法关联控制器与 HID，因此使用名称匹配，而非猜测 VID/PID。
+声明支持的设备在发现后等待 **2 秒**供异步发布，期间不打开设备；
+若仍无匹配的控制器，则按通用 HID 直通，包括 macOS 声称支持的 DJI C5。
+之后若出现匹配的 GC 控制器，会在分配玩家前释放通用 HID 路径；GC 断开时重新提供 HID。
+每次等待、接受或因 GC 跳过/释放的状态转换只记录一行日志，包含 VID:PID 和产品名称。
+DualSense 和 Valve 设备仍走原有路径。发现使用独立设备模式的 IOHIDManager：
+匹配本身不会打开无关设备或请求“输入监控”。普通操纵杆/手柄集合不需要此权限；
+带键盘/鼠标/触控板集合的已连接复合控制器可能需要，只有打开已选中的控制器时才可能请求。
+Apple 在 [IOHIDDevice](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDFamily/IOHIDDevice.cpp)
+中标记这些集合，[设备插件](https://github.com/apple-oss-distributions/IOHIDFamily/blob/main/IOHIDLib/IOHIDDeviceClass.m)
+在打开时请求访问权限，而不是在匹配 usage 时请求。
+
 **Steam Controller 直通。** **在 SteamOS 中显示为**为“自动”或“Steam Controller”时，Steam Controller（2026）经同一 uhid 路径以其本身交给 SteamOS，Steam 用自己的驱动处理其触控板、陀螺仪、背键和振动。单独连接时为玩家 1；开启**更多控制器**时，若旁边还有其他控制器（例如玩家 1 的 DualSense），Steam Controller 会成为下一个空闲玩家，而不是被丢弃：
 - 通过蓝牙 LE 连接到 Mac（`28de:1303`）：以其自身 ID 和蓝牙总线直通。GameController 不显示它，因此不需要 GameController 控制器，也无法唤醒休眠中的客户机（虚拟机暂停时会丢弃 HID 输入）；
 - 通过其 Puck 接收器（`28de:1304`）：Puck 的接口 2–5 是控制器槽位，带有控制器本身的报告描述符。SDL 与 Steam 只按 USB 接口号识别 Puck 的控制器，而 uhid 设备没有接口号，因此传输控制器状态的槽位以有线 Steam Controller（`28de:1302`，USB 总线）交给 SteamOS；槽位超过 2 秒没有控制器状态即移除（控制器关闭、换到其他槽位或蓝牙），由 Puck 的 GameController 手柄接替。只有恰好一名玩家的 GameController 控制器是 Steam Controller、且恰好一个 Puck 槽位活跃时，才将它直通给该玩家；否则这些玩家继续使用 uinput 手柄，因为无法可靠地将槽位与控制器对应。
 
-其报告描述符含键盘和鼠标集合（控制器的桌面模式），因此 macOS 只有在系统设置 → 隐私与安全性 → **输入监控**允许后才打开它：启动器会请求该权限，授予后立即打开设备（`hid passthrough: Input Monitoring granted, reopening the HID manager`）。macOS 把蓝牙 LE 控制器 64 字节的 feature report 1（Steam 的命令通道）返回为 65 字节，因此 GET_REPORT 缓冲区在描述符尺寸之外留有余量。
+其报告描述符含键盘和鼠标集合（控制器的桌面模式），因此 macOS 只有在系统设置 → 隐私与安全性 → **输入监控**允许后才打开它：启动器会请求该权限，授予后立即打开设备（`hid passthrough: Input Monitoring granted, reopening the HID manager`）。macOS 把蓝牙 LE Steam Controller 64 字节的 feature report 1（Steam 的命令通道）返回为 65 字节，因此只有该控制器经蓝牙的 GET_REPORT 缓冲区在描述符尺寸之外留有余量；USB DualSense 使用描述符的原始尺寸（1.9.9 中带余量时其固件 report 32 超时，STEAMAC-84）。断开的控制器按启动器持有的设备引用移除，因此经 USB 或蓝牙重新连接后直通的是新设备。
+控制器需要此权限时，设置 → 控制器会显示警告，并提供 **Mac 输入监控设置…** 按钮，请求访问权限并打开相应的系统设置页面。警告仅在启用 Steam Controller 或通用 HID 控制器匹配时显示。如果已启用访问权限但控制器仍不可用，请重新启动启动器。
 
 **多个控制器。** 开启设置 → 控制器 → **更多控制器**（默认开，立即生效）后，其余已连接的控制器成为玩家 2–4，在 SteamOS 中各有自己的手柄，用于本地合作。每个玩家一个 virtio-console 端口：玩家 1 用上述 `fx.pad`，其余用 `fx.pad2` … `fx.pad4`，各由以端口命名的 `fx-pad@.service` 实例服务（同一个 `fx-progress-agent pad`，以 `FX_PAD_PORT` 指定端口，由 udev 启动），因此各玩家端口上的协议相同，手柄的振动在驱动它的控制器上播放。客户机对应端口的服务发出 `hello` 后该玩家才获得控制器：没有 `fx-pad@.service` 的客户机层仍只有一个手柄。设置中选定的控制器是玩家 1，除非该位置已被蓝牙 LE Steam Controller 占用；玩家的控制器在断开前保持不变（其他玩家不递补），重新连接的控制器占用第一个空位。蓝牙 LE Steam Controller 也保持其玩家位置：较低编号玩家断开不会使其递补，新连接的 GameController 控制器也不会将其挤走。BLE 控制器断开时释放位置，重新连接时占用编号最低的可用空位。**在 SteamOS 中显示为**、A/B 互换与死区对所有手柄生效（“自动”时每个手柄与各自的控制器同类）。只有玩家 1 的 DualSense 可直通，且另一玩家的控制器也是 DualSense 时不直通（GameController 不报告哪个 HID 设备属于谁）：此时两者都获得 uinput 手柄。Steam Controller 可直通给任意空闲可用玩家（见上文）。虚拟机运行时，设置 → 控制器中的实时输入测试会标出每个控制器对应的玩家（**玩家 2**）。关闭：只使用玩家 1；BLE Steam Controller 不会挤走已占用该位置的 GameController 控制器，如果 BLE 已占据该位置，新连接的 GameController 控制器则需等待。
 
@@ -423,13 +548,15 @@ desync 与 Valve 磁盘创建 CA（许可证在 `Resources/licenses`）；图标
 `host/launcher/AppIcon.icon`（Icon Composer 文档）由 `actool` 编译为 `Assets.car`
 （macOS 26 的 Liquid Glass，macOS 15 用预渲染），外加回退 `AppIcon.icns`；
 带 hypervisor + disable-library-validation 权利的 ad-hoc 签名。应用可移到
-`/Applications`。
+`/Applications`。其 Info.plist 记录本构建树路径（`SteamacBuildOut`，如 `/Users/<你>/…/work/out`，
+以便移动后仍能找到树中的磁盘）：不要把这个包交给他人；`dist.sh` 构建会去掉该键。
 
 从访达启动（无参数）用包内的内核、initramfs 与层，SteamOS 磁盘取自 设置 → 高级 → 磁盘映像。默认：
 `~/Library/Application Support/es.fxgam.steamac/steamos.img`；否则用仓库的
 `work/out/steamos.img`（包旁边或构建处）。无磁盘时，首次启动窗口提供**新建磁盘…**（见下节）或**使用已有磁盘…**
-（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。此模式客户机控制台与启动器日志写入
-`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`；SIGUSR1 帧转储亦然。`./run.sh`
+（映像就地使用从不复制；`scripts/build-image.sh` 也可构建）。磁盘必须是带本布局分区的 SteamOS 原始 GPT 磁盘：选择 Steam Deck 恢复压缩包或 macOS 版 Steam 安装器时会被拒绝，已保存但不合格的磁盘在启动前即被拒绝（STEAMAC-7Y/7Z）。若客户机 initramfs 仍然失败（`steamac-init: FATAL …`），窗口显示错误而不是停在 3%。启动器无法打开或锁定的磁盘（权限、可移除卷访问）会提示检查 Finder → 显示简介 → 共享与权限以及隐私与安全性，并只记日志，不作为崩溃报告发送（STEAMAC-15）。此模式客户机控制台与启动器日志写入
+`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`（超过 64 MiB 时，包括会话期间，移至
+`steamac-vm.old.log`）；SIGUSR1 帧转储亦然。`./run.sh`
 与 `work/out/steamac-vm` 照常用（除非被标志覆盖，窗口设置对它们同样有效）。
 
 映像在外接盘上时，首次从访达启动 macOS 会问“FX Steam Launcher
@@ -461,15 +588,16 @@ work/out/steamac-vm --create-disk ~/steamos.img [--branch stable] [--home-gib 64
 `https://store.steampowered.com/steamos/download/?ver=steamframe`：仅个人使用、禁止再分发）与 Steam 订户协议。窗口中为带两个文本链接的复选框——不勾选无法创建；命令行用 `--accept-eula`，
 无此标志 `--create-disk` 打印链接并以代码 2 退出。接受记录（日期与协议 URL）存于设置域，代码中协议 URL（`SteamOSLicense.eulaURL`）变化前一直有效。
 
-外接 APFS、Mac OS 扩展与 exFAT 卷可存放磁盘。FAT32/MS-DOS 因 4 GiB 单文件限制在下载前拒绝
+外接 APFS、Mac OS 扩展与 exFAT 卷可存放磁盘，推荐 APFS；NTFS、网络文件系统和未知文件系统驱动在下载前即被拒绝（STEAMAC-8S：NTFS 驱动在下载一小时后以“File too large”拒绝了 92 GB 的磁盘），下载后才出现的文件大小限制会向用户说明并只记日志，不发送到 Sentry。FAT32/MS-DOS 因 4 GiB 单文件限制在下载前拒绝
 （临时 rootfs 就 10 GiB）。只读卷和没有写入权限的文件夹同样会被拒绝。与 APFS 不同，exFAT 无稀疏文件：即使游戏还没装，也需要所选磁盘全尺寸加临时 rootfs 的空间。下载缓存在 exFAT 上也远超其约 4.4 GB 的数据：macOS 把每个分块文件的来源（provenance）属性存进额外的 `._` 文件，且每个文件和文件夹都占用整簇（2 TB 盘上为 128 KiB），合计约 28 GB。启动器先检查空间再重建 rootfs；在 exFAT 上，若卷空间不足，会在分配磁盘前删除分块缓存（`--keep-cache` 保留缓存，需要两者的空间）。
 预期存储错误（目标已存在、缓存正被使用、只读卷、没有写入权限、空间耗尽、磁盘断开、创建过程中磁盘或缓存文件夹消失或文件系统 I/O 错误）
 会显示处理建议并只记日志，不作为错误发送到 Sentry；创建开始后的错误也遵循此规则。元数据/包下载的网络错误
-（离线、DNS、超时、连接中断和系统 TLS 验证拒绝）与 desync 重试耗尽一样处理，绝不绕过 HTTPS 证书验证。
-非预期创建错误和包签名错误仍会上报，事件详情保留原始诊断。
+（离线、DNS、超时、连接中断和系统 TLS 验证拒绝）与 desync 重试耗尽一样处理，包括读取分块 HTTP 响应正文时超时（STEAMAC-92），绝不绕过 HTTPS 证书验证。若 desync 无法把分块存入缓存（exFAT 缓存上的 `invalid argument`，STEAMAC-90/91），日志会记录出错缓存分片的状态（模式、条目与临时文件数、读取错误）以便诊断。
+非预期创建错误和包签名错误仍会上报，事件详情保留原始诊断。若内置的 desync 缺失、不可读或不可执行（STEAMAC-8K），窗口会说明安装不完整：请从官方 DMG 重新安装到“应用程序”，并检查安全软件。每次安装只发送一条警告，记录 translocation、desync 的存在与权限、代码签名结果以及 Resources 中相对于包的文件名与大小；包的绝对路径只留在本地日志中，不打开崩溃报告对话框。
+警告还记录应用包、`Contents` 和 `Resources` 是否仍然存在（类型和 errno）：应用在运行时被移动、删除或替换会让三者全部消失（STEAMAC-AE），因此建议在替换或移动前完全退出 FX Steam Launcher，然后从“应用程序”重新打开。
 启动器记录目标和缓存的文件系统类型。缓存分块重命名冲突时，以单工作线程、不使用缓存重试一次。
 rootfs 哈希不符时再顺序读取，以区分错误的稀疏区段元数据和文件字节损坏；若字节损坏，则删除临时 rootfs 与分块缓存，
-以单工作线程、不使用缓存重新下载一次，重试前清空两个磁盘槽。再次校验失败仍会上报；哈希不匹配签名清单就不发布磁盘。
+以单工作线程、不使用缓存重新下载一次，重试前清空两个磁盘槽。再次校验失败仍会上报；哈希不匹配签名清单就不发布磁盘。报告会记录顺序 SHA-256，以及源数据重读与 rootfs-A 首个不同的 1 MiB 块（偏移量与两个块的摘要），以区分读取不稳定与复制错误（STEAMAC-9F/9H）。
 创建磁盘时会把读回的分区表与写入内容比对——在私有文件中以及磁盘发布之后各一次。若不一致（STEAMAC-6J，exFAT），
 或重建的 rootfs 在分配磁盘前消失（STEAMAC-68），仍会上报，并附文件标识与不一致的 GPT 字段；窗口建议用“磁盘工具”的“急救”检查驱动器或换一个驱动器。
 
@@ -485,7 +613,7 @@ rootfs 哈希不符时再顺序读取，以区分错误的稀疏区段元数据�
 1. `https://steamdeck-atomupd.steamos.cloud/meta/holo/steamos/aarch64/vr/<branch>.json` → 最新候选（`update_path`、`chunks_store_path`）。
 2. 下载 `.raucb`（约 2 MB）；Security.framework 仅对照 Valve 固定 CA `CN=steamdeck-images`（`scripts/keys/steamdeck-images.pem`，SHA-256 指纹嵌入代码）校验其 CMS 签名，不用系统信任库。自研 squashfs 读取器（用锁定 zstd 发行版的 zstd，`fetch-zstd.sh`）解出 `manifest.raucm` 与 `rootfs.img.caibx`；检查
    `compatible=steamos-aarch64`、版本与槽大小。
-3. 官方 desync（`fetch-desync.sh`，锁定版本与 sha256）从 Valve 块存储（约 4.4 GB 数据）组装 10 GB `rootfs.img`；家目录卷上的磁盘用
+3. desync（`fetch-desync.sh`：从源码构建，锁定版本与 Go 模块校验和）从 Valve 块存储（约 4.4 GB 数据）组装 10 GB `rootfs.img`；家目录卷上的磁盘用
    `~/Library/Caches/es.fxgam.steamac` 中的 `desync/` 做块缓存，否则用磁盘旁 `<disk>.cache`
    （外接盘则内部不占缓存空间；成功后删除该目录）。故停止/创建（或 Ctrl+C 后重跑命令）可断点续传；之前某次在后续步骤失败而留下的完整 `<disk>.rootfs-tmp` 会先被删除（desync 不会复用它，保留只会让它占用两倍空间）。一个缓存一次只允许一次创建：第二次（另一窗口或 `--create-disk`）以“另一个 SteamOS 磁盘正在使用下载缓存 … 创建：请等待创建完成或取消该操作”停止（缓存目录中 `creation.lock` 的 `flock`），而非共享块缓存与临时文件。
 4. 稀疏磁盘文件：保护 MBR + GPT（主备，CRC32），名称、顺序、类型、大小与对齐与 `scripts/steps/40-disk.sh` 完全一致，PARTUUID 随机。一遍写入中，对 `rootfs.img` 哈希（sha256 须与签名 manifest 一致），16
@@ -518,7 +646,7 @@ SteamOS 启动哪个 Steam 客户端由启动器选择：首次启动窗口、**
 
 | 选项 | 是什么 | 利弊 |
 |---|---|---|
-| **Steam Deck 客户端**（`deck`，默认） | 公开 ARM64 Steam Deck 客户端，`steamdeck_stable` 分支（与公开 `steam_client_linuxarm64` 同构建；ARM 版未官宣） | 屏幕二维码正常登录（Steam 手机 App → Steam 令牌 → 扫码）外加密码表单；公开客户端分支而非内部测试版 |
+| **Steam Deck 客户端**（`deck`，默认） | 公开 ARM64 Steam Deck 客户端，`steamdeck_stable` 分支（与公开 `steam_client_linuxarm64` 同构建；ARM 版未官宣） | 屏幕二维码正常登录（Steam 手机 App → Steam 令牌 → 扫码）外加密码表单；公开客户端分支而非内部测试版；**Proton Experimental (ARM64)** 是单独的兼容性选项，并非 x86-64 **Proton Experimental** |
 | **Steam Deck 客户端（测试版）**（`deckbeta`） | `steamdeck_publicbeta` 分支 | 同 `deck`，测试版 |
 | **Steam Frame 客户端**（`frame`） | Valve 的 Steam Frame 测试版客户端（`linux_arm64_beta_<hash>`，参数 `-deckard -vrgamepadui`）——如映像自带 | 映像自带客户端；未发售设备的内部测试版；登录走下述登录模式 |
 
@@ -541,7 +669,7 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 若该接口不可用或新缓存同样不可写，会记入日志，着色器编译错误仍可上报。
 `work/out/steamac-vm --selftest-metal-cache` 在私有不可变缓存中复现
 `monolithic_metal.pcm: Operation not permitted`，随后用新缓存验证真实 Metal 源码编译
-（不启动虚拟机、不发送 Sentry 事件）。
+（不启动虚拟机、不发送 Sentry 事件）。该选择只在 Metal 初始化前进行：之后才变得不可写的缓存无法在运行中的进程里重定向，因此报告附带启动时的决定（`metal_cache` 标签）以及失败的 `monolithic_metal.pcm` 路径的只读元数据（STEAMAC-7W）。MoltenVK 不支持同时含曲面细分与几何着色器的管线：这类管线返回 `VK_ERROR_FEATURE_NOT_PRESENT`，而不是带着无效缓冲绑定编译（STEAMAC-83）。
 
 | 选项 | 是什么 | 利弊 |
 |---|---|---|
@@ -550,12 +678,12 @@ Metal 初始化前，启动器检查运行时编译器的模块缓存是否可�
 
 切换改变 Venus 驱动身份（管线缓存 UUID），Steam 与游戏重建着色器缓存。宿主驱动建不出的管线在 virglrenderer 中是占位：其绘制与派发被丢弃，驱动永远见不到 `VK_NULL_HANDLE`。
 
-宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，并在打包输出时保留双源混合的第二个索引（STEAMAC-75）（`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器）。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
+宿主驱动拒绝会触发 Metal 断言、进而终止整个虚拟机的 Vulkan 输入，并把 Vulkan 参数写入日志。KosmicKrisp：层范围为空或越界、或在块大小不同的颜色格式之间创建的图像视图返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`（STEAMAC-62/3）；着色器使用而管线布局缺少的描述符读为零、写入被丢弃（STEAMAC-6H）；经中转缓冲的图像复制不超出 mip 边界并覆盖体纹理的所有切片（STEAMAC-5E/5F）；mip 级别、层、深度或采样数超出格式查询所报告范围的 LINEAR 图像在 `vkCreateImage` 时被拒绝（STEAMAC-3F/6Y）；缓存的预编译 NIR 着色器附带 BLAKE3，反序列化前先校验，损坏的条目视为缓存未命中而不是崩溃。`vkCreateComputePipelines` 中的 STEAMAC-6M/6K/7J/7H/7P 崩溃另有原因：Mesa 的 NIR 序列化器只用 20 位保存源索引，超过 2^20 个对象的着色器反序列化后，源会指向无关对象；更大的索引现在另用一个字写出（`host/kosmickrisp/test/nir_object_ids.c` 随 KosmicKrisp 构建往返校验一个含一百多万个 def 的着色器）。嵌套超过 128 层的分支改为带已保存条件的并列块输出，因为 Metal 拒绝括号嵌套超过 256 层的源码（STEAMAC-G 报告；`sentry-g-brackets.sh` 在 GPU 上校验 320 路发散分支阶梯）。对可复现的 KosmicKrisp 卡顿，启动 macOS 启动器时（而不是作为游戏参数）设置 `MESA_KK_DEBUG=syncs,cbs`，会追踪队列同步以及每次超过一秒的 CPU 等待（STEAMAC-94）。源缓冲或目标缓冲为 NULL 的缓冲复制会被跳过并仅警告一次，而不是让虚拟机进程崩溃（Dota 2，STEAMAC-9S/9T；`host/kosmickrisp/test/copy-buffer-null.py`）。Mesa 在 macOS 上的屏障回退实现可能让 `util_queue_finish` 在销毁设备（着色器磁盘缓存）时永久挂起；`host/kosmickrisp/test/util_queue_finish.c` 随 KosmicKrisp 构建运行。MoltenVK：对 Metal 无法混合的附件（R32_UINT）启用混合的管线创建失败（STEAMAC-3A）；顶点阶段辅助缓冲打包进 Metal 的 31 个缓冲槽（STEAMAC-67）；支持完整 32 位 specialization constant ID（STEAMAC-6A）；导入宿主内存中的 optimal 图像获得 placement heap，3D 图像的 2D 视图用作渲染附件时不再访问缺失的 heap（STEAMAC-76/77）；管线创建失败时日志记录完整的小型着色器、Metal 描述符、混合状态和片段输出索引（STEAMAC-41/75）；若着色器没有第二个输出，该附件的双源混合因子对它取零（Vulkan 中其值未定义，而 Metal 会拒绝该管线，STEAMAC-75）；在 M1 上，带 sample 限定的透视投影改在 `get_sample_position(sample_id)` 处插值，避开 Metal 缺失的 `llvm.agx2.sample.itrproj` 内建函数（STEAMAC-8J）。SPIRV-Cross 修复 STEAMAC-33/6D/6E/5M/5K/2N/5C/6V 的 MSL 错误，在打包输出时保留双源混合的第二个索引（STEAMAC-75），保留带间隔的接口块成员显式 Location（Location 0 与 2 曾变成 `locn0`/`locn1`），并把 object 着色器负载中的 `locations` 声明为 `uint[32][4]`（布局相同）：Apple 编译器在对 `uint4 locations[32]` 做部分写入时崩溃，表现为内部错误或 XPC 连接中断（STEAMAC-41/R）；编译服务中断的报告附带宿主内存压力与 swap（STEAMAC-3X）。Workgroup（共享内存）数组中的 `vec3` 成员按 Vulkan 填充规则所计的大小紧凑存放，968 个 `{float; vec3; float}` 只需 19360 字节，而不是 Metal 布局下超过 32768 的 46464 字节（STEAMAC-57）。同一 Location 上比片段输入更窄的顶点输出（float3 → float4）会加宽到输入宽度；缺失的 varying 与不同数值类型仍不支持（STEAMAC-2M/88）。名为 `rgb9e5` 的着色器函数会被重命名，以免与 Metal 的 `rgb9e5` 像素类型冲突（STEAMAC-A9）；只写入 `ClipDistance` 的几何/网格阶段也会写入片段着色器读取的 `user(clip0)` 副本（STEAMAC-A2）。`host/moltenvk/repro/sentry-msl.sh` 编译每个重建的着色器。wmtr（DXMT）只拒绝无效或已释放的对象句柄，在游戏上下文消失时结束其未关闭的编码器（包括存活对象超过 65,536 个时，STEAMAC-70），并拒绝没有顶点函数的渲染管线（STEAMAC-6S/6Z）；`wmtr/tests/wmtr_dxmt_test.m` 在 GPU 上通过发布的执行器运行 DXMT 自己的命令列表。
 
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性。** 设置 → 高级 →
 **允许 DXMT（通过 Mac 的 Metal 运行 D3D11）**默认关闭，下次启动生效（单次启动用 `--wmtr-lib PATH` 或 `--no-wmtr`）。
 应用捆绑 `libwmtr_host.dylib`；客户机层包含 DXMT 的
-`{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。开启时，启动器提供 libkrun 的
+`{d3d11,dxgi,d3d10core,winemetal}.dll` 与 `winemetal.so`。若 macOS 无法提供 Metal drawable（例如图层尺寸为零或 drawable 超时），DXMT 会跳过该帧，而不是提交 `nil`（Metal 会因此断言并终止虚拟机，STEAMAC-98）；日志中有限次记录此事，渲染从下一个 drawable 继续。开启时，启动器提供 libkrun 的
 wmtr virtio-gpu 上下文（补丁 0018，capset 30），并以 `steamac.gfx=dxmt` 启动虚拟机。
 客户机的 `steam-gfx-path` 将每个已安装的 x86-64 Proton 的库替换为 DXMT，并监视 Proton
 的安装与更新；关闭后以 `steamac.gfx=vulkan` 启动并恢复 Proton 原始文件。DXMT 的 dll 是带 Wine unixlib 的
@@ -570,8 +698,12 @@ Steam 启动时应用，用户在 Steam 中的修改保持不变。这不只是 
 下无论使用什么 DLL 都会崩溃。例如 Stellar Blade Demo（3564860）的 SEH 递归最终导致
 `virtual_setup_exception stack overflow`，但它能在 Proton 11.0 ARM64 上运行。
 Steam 在首次启动 DXMT 游戏时下载 Proton 10.0（x86-64，在 Steam Linux Runtime 3.0 中经 FEX 运行），
-`steam-gfx-path --watch` 随后放入 DXMT。Proton Experimental 与 x86-64 Proton 11.0 需要 Steam Linux
-Runtime 4.0，arm64 客户端拒绝安装（“Invalid platform”）。从不使用通配条目（“0”）：Steam 也会把高优先级
+`steam-gfx-path --watch` 随后放入 DXMT。**x86-64** 版 Proton Experimental 与 Proton 11.0 需要
+x86-64 Steam Linux Runtime 4.0（`SteamLinuxRuntime_4`，应用 4183110）。不要将它们与
+**Proton Experimental (ARM64)** 或 **Proton 11.0 (ARM64)** 混淆：后两者使用单独的 ARM64
+运行时（`SteamLinuxRuntime_4-arm64`，应用 4185400），Steam 可在 ARM64 上安装。
+在游戏的**属性 → 兼容性**中选择名称明确以 **(ARM64)** 结尾的工具；Steam Deck 客户端也提供 ARM64
+Experimental，无需为此切换至 Frame 客户端。从不使用通配条目（“0”）：Steam 也会把高优先级
 通配应用到自身工具上，曾因此清空 FEX 工具。关闭“允许 DXMT”会删除脚本管理的映射。
 Proton 10.0 上的 D3D12 的 Wine 部分改在 FEX 下而非 ARM64EC 运行，会消耗更多 CPU。
 已在 M1 Max 上端到端验证：Death's Door（Unity，D3D11）在 Proton 10.0 上启动，渲染器显示
@@ -647,8 +779,8 @@ ARM64 Steam Deck 客户端（`steamdeck_stable`），登录显示屏幕二维码
 
 `host/launcher/dist.sh` 把构建好的 `work/out/FX Steam Launcher.app` 做成可下载的
 `work/out/dist/FX-Steam-Launcher-<version>.dmg`（应用 + `/Applications` 链接）。去掉 `SteamacBuildOut` 键（本构建树路径）的包拷贝用 Developer ID
-重签，hardened runtime，安全时间戳：先签全部内嵌 Mach-O（`Frameworks/*.dylib`、`Resources` 中辅助程序），
-再用 `steamac-vm.entitlements` 签包（hypervisor、
+重签，hardened runtime，安全时间戳，由内向外：先签全部独立内嵌 Mach-O（`Frameworks/*.dylib`、`Resources` 中辅助程序、Sparkle 的 `Autoupdate`），
+再由深到浅签内嵌包（Sparkle 的 `Updater.app`、`Sparkle.framework`），最后用 `steamac-vm.entitlements` 签包（hypervisor、
 disable-library-validation 与音频输入——缺后者 hardened runtime 会静默挡住麦克风）。应用公证并装订，DMG 签名、公证、装订——
 Gatekeeper 离线也放行（首次打开仍有常规“来自互联网”提示）。
 
@@ -671,11 +803,38 @@ host/launcher/dist.sh       # 签名、公证、DMG
 dosfstools、e2fsprogs、btrfs-progs、构建脚本、`README.txt`）；随 GitHub release 附 DMG 发布。
 旧版本：`scripts/gpl-sources.sh v1.2`。
 
+应用内更新（[更新检查](#更新检查)）：`dist.sh` 写入 `SUFeedURL`（`SPARKLE_FEED_URL`，默认
+`https://fxgl.github.io/steamac/appcast.xml`）、`SUPublicEDKey`（`SPARKLE_PUBLIC_KEY`，默认为 `dist.sh` 中固定的 fxgl 发布密钥
+`ML1BKHcTTwKlVSLtTdMvyk7Fhwg35VN1nUp+o4fezt8=`：已安装的副本只接受它签名的更新）、
+`SUVerifyUpdateBeforeExtraction` 与 `SURequireSignedFeed`；钥匙串中没有该密钥的私钥时，公证构建失败（`generate_keys -p` 打印其公钥）。
+EdDSA 密钥对已用 `host/launcher/.build/artifacts/sparkle/Sparkle/bin/generate_keys` 创建一次（Sparkle 工具随 SwiftPM 包提供，
+与内嵌框架同版本）；私钥留在登录钥匙串，绝不进仓库或 CI。请离线备份（`generate_keys -x <file>`；另一台 Mac 用
+`generate_keys -f <file>` 导入）：丢失后已安装的副本再也收不到更新。`build.sh` 令 `CFBundleVersion` 等于
+`CFBundleShortVersionString`（Sparkle 按它比较版本）。发布须按此顺序（feed 不得指向尚未上传的文件）：
+
+```sh
+host/launcher/dist.sh
+gh release create v<version> work/out/dist/FX-Steam-Launcher-<version>.dmg \
+    work/out/dist/FX-Steam-Launcher-<version>-gpl-sources.tar --notes-file <notes.md>
+host/launcher/appcast.sh    # docs/appcast.xml，增量更新附到 release
+git commit -m "appcast: <version>" docs/appcast.xml && git push    # GitHub Pages 发布 feed
+```
+
+`appcast.sh` 先确认 release 中的 DMG 就是本地文件（大小相同），再对 `work/out/updates`（旧版本归档；feed 取自
+`docs/appcast.xml`）运行 Sparkle 的 `generate_appcast`：新条目含 DMG 的 EdDSA 签名、取自 `LSMinimumSystemVersion` 的最低 macOS、
+GitHub release 说明（Markdown，内嵌）与该 release 的下载地址；对 `work/out/updates` 中至多 3 个旧版本 DMG 生成增量更新
+（内核与多数辅助程序很少变化），改为不含空格的文件名（GitHub 会改名此类文件）并上传到 release；整个 feed 签名。
+其余参数交给 `generate_appcast`，如 `--phased-rollout-interval 86400`（7 天内逐步推送）或 `--critical-update-version ''`。
+不要手改 `docs/appcast.xml`：签名覆盖整个文件。本地端到端测试：两个版本各用 `dist.sh --no-notarize`，带
+`SPARKLE_FEED_URL=http://127.0.0.1:8765/appcast.xml` 与 `SPARKLE_PUBLIC_KEY=<测试公钥>`，每次之后运行
+`SPARKLE_KEY_FILE=<测试私钥> host/launcher/appcast.sh --local http://127.0.0.1:8765`，并在 `work/out/updates-local` 中运行
+`python3 -m http.server 8765`。
+
 ## 崩溃报告（Sentry）
 
 启动器向开发者自己的 Sentry 服务器（`sentry.fxgam.es`，经 SwiftPM 的
 sentry-cocoa 9.30.0 SDK）发送崩溃报告与少量错误。
-默认开启；设置 → 通用中**发送崩溃报告和诊断信息**复选框、首次启动窗口或创建 SteamOS 磁盘窗口可关闭（“发送内容”链接展示下表）。关闭后
+默认关闭；设置 → 通用中**发送崩溃报告和诊断信息**复选框、首次启动窗口或创建 SteamOS 磁盘窗口可开启（“发送内容”链接展示下表）。关闭后
 SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）。单次启动：`--no-crash-reports` 或 `STEAMAC_SENTRY=0`。
 
 发送内容：
@@ -684,11 +843,11 @@ SDK 根本不启动、不联网（已落盘报告保留在原处、不发送）�
   abort、经 libkrun C API 传出的 Rust panic。虚拟机进程崩溃报告在下次启动虚拟机时发送。未捕获的 Objective-C 异常按其原因（stderr 中首次抛出的消息与堆栈）分组，而不是归入 `CPPExceptionTerminate`（STEAMAC-58）；
 - 少量错误（每进程每指纹至多一次，有全局上限；同一指纹至少一天、着色器编译错误 30 天内不重发）：客户机 GPU 上下文 fatal/device lost（vkr “fatal decoder state”、“device lost”）、MoltenVK
   管线编译错误（`[mvk-error] … compile failed`；MoltenVK 若打印 MSL 源码
-  （`[mvk-msl] …`：前 40 行与出错前后行）放 extra `msl_source` 而非面包屑；vkr “pipeline … creation failed on host” 只做面包屑）、libkrun 中 Rust panic（`thread … panicked at`）、首次磁盘预配失败（`provision
+  （`[mvk-msl] …`：前 40 行与出错前后行）放 extra `msl_source` 而非面包屑；完整的出错着色器经过脱敏后以 `.metal` 文件附加，最大 256 KiB，每个进程最多两个不同的着色器，按内容哈希去重（STEAMAC-AD）；vkr “pipeline … creation failed on host” 只做面包屑）、libkrun 中 Rust panic（`thread … panicked at`）、首次磁盘预配失败（`provision
   failed`）、磁盘创建失败、非预期虚拟机退出（用户未要求关机时的非零退出码或信号）与空闲指示器“SteamOS 无响应…”；
   “SteamOS 无响应”报告附带 `stall_history`：最多 32 个每秒采样的 GPU 命令计数、心跳时长、
   客户机运行时间/负载、进程 CPU 时间和宿主轮询间隔，即使未开启性能统计也会收集（STEAMAC-8）。
-  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。
+  仅代理心跳停止，并不能证明整个客户机或 GPU 已经挂起。GPU 活动、虚拟机内存和宿主线程快照分别有上限；线程状态与 CPU 估算只是证据，不是调用栈，也不能证明 GPU 死锁。历史还记录宿主应用是否激活、关键窗口以及窗口可见/遮挡状态。“仍在工作”只表示客户机心跳仍在，不能证明游戏在推进或在编译着色器。虚拟机退出报告会说明为何没有附上 macOS 崩溃报告（未及时写出、不可读、不完整或属于其他 pid）。
   空闲指示器持续 10 秒时，同样的采样会写入日志一次，即使心跳仍正常，
   因此无需启用性能统计，“报告问题”也可包含游戏卡顿的诊断信息。
   宿主调度停顿（启动器自身数秒未运行）之后，检测器先观察一个新的心跳窗口，不把停顿算作客户机挂起。
@@ -733,23 +892,46 @@ Resources 中的辅助程序；每个都须通过 `sentry-cli debug-files check`
 
 ## 更新检查
 
-应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
-地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
-（`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，在虚拟机窗口旁边（屏幕有空间则不压住；不抢焦点——键盘与捕获鼠标留给虚拟机）出现窗口：“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
-附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
-**稍后提醒**（下次检查再提示）。应用菜单 **检查更新…**
-项（可用版本未被跳过时显示“有可用更新：X.Y…”带 新 角标，
-打开此窗口）立即检查——无 6 小时限制且含已跳过版本——
-报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
-（`update: …`）。设置 → 通用中 **启动时检查更新**复选框可关（立即生效）。开发版启动器 `work/out/steamac-vm` 启动时不检查（菜单可用）；源码构建（`bundle.sh`）与 release 会检查。
+release 在应用内自行更新（Sparkle）；其他构建检查 GitHub 最新 release 并提供 DMG。两者共用：虚拟机窗口旁的窗口
+（屏幕有空间则不压住；不抢焦点——键盘与捕获鼠标留给虚拟机）、应用菜单 **检查更新…** 项（发现版本后显示“有可用更新：X.Y…”带 新 角标），
+以及设置 → 通用中的 **启动时检查更新** 复选框（立即生效）。
 
-隐私：请求只发 `api.github.com`（GitHub），只带 `User-Agent:
+**应用内更新（release）。** release（`dist.sh` 把 feed 与 EdDSA 公钥写入 Info.plist）使用
+[Sparkle](https://sparkle-project.org) 2.10.1（`Contents/Frameworks/Sparkle.framework`，不含 XPC 服务：应用未沙盒化），
+以上述窗口取代其自带界面。复选框开启时，至多每 6 小时请求一次 `https://fxgl.github.io/steamac/appcast.xml`，运行期间也会检查。
+feed 整体签名，每个更新另有 EdDSA 签名，解包前都用应用内公钥校验（`SURequireSignedFeed`、`SUVerifyUpdateBeforeExtraction`）；
+Sparkle 还要求新应用的代码签名一致。需要更新 macOS（或其他 Mac）的版本不会提供；菜单检查会说明原因。新版本显示说明与按钮
+**安装更新**（后台下载——SteamOS 继续运行，**隐藏** 关闭窗口，**取消** 停止下载——随后由 Sparkle 安装器准备）、**跳过此版本**、
+**稍后提醒**。已准备好的更新提供 **安装并重新启动**：SteamOS 完全按“关闭 SteamOS”关机（电源键，至多 180 秒，绝不强制退出），
+随后 Sparkle 安装器在运行中的进程之外替换应用并重新打开；以及 **退出时安装**（关闭窗口亦然）：启动器退出时安装。
+feed 中有从已安装版本出发的增量更新（仅变化文件）时使用增量，否则下载完整 DMG。
+
+Sparkle 运行在虚拟机进程中（唯一运行 NSApplication 的进程）；退出从不经过 AppKit（客户机关机后 libkrun 结束进程），
+而客户机重启后监管进程会从包中启动新的虚拟机进程，这会与正在替换它的安装器竞争。因此，更新准备好后虚拟机进程在 run dir
+留下 `update` 标记，监管进程不再启动虚拟机；SteamOS 重启（来自 SteamOS 或“重启虚拟机”）改为“安装并重新启动”。
+Sparkle 自己的退出请求（在启动器发起的关机之后到来）被忽略，以免变成强制退出；用户第二次退出仍会强制退出。
+
+无法自我替换的副本保留下述 GitHub 检查（日志 `update: in-app updates off (…)`）：源码构建（`bundle.sh`）、开发版启动器、
+直接从 DMG 运行或被 Gatekeeper 转移（未移入“应用程序”）的应用，以及只读卷上的副本。
+
+隐私：Sparkle 的请求只发往 `fxgl.github.io`（feed）与 GitHub release 下载，带标准 `User-Agent`（应用与 Sparkle 版本）；
+无系统概况、Mac 或用户标识，无 Sentry。Sparkle 的状态（检查时间、跳过的版本）存于应用设置（`SU…` 键）。
+
+**GitHub release 检查（其他构建）。** 应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
+地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
+（`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，窗口显示“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
+附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
+**稍后提醒**（下次检查再提示）。菜单项立即检查——无 6 小时限制且含已跳过版本——
+报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
+（`update: …`）。开发版启动器 `work/out/steamac-vm` 启动时不检查（菜单可用）；源码构建（`bundle.sh`）会检查。
+
+GitHub 检查的隐私：请求只发 `api.github.com`（GitHub），只带 `User-Agent:
 FXSteamLauncher/<version>`（加标准 HTTP 头与上次应答 ETag，以便 GitHub 回“未修改”）；无 Mac 或用户标识、cookie 或 Sentry。检查时间、ETag、应答与跳过版本存于设置（`updateLastCheck`、`updateETag`、`updateCachedBody`、
 `updateCachedURL`、`updateSkippedVersion`）。
 
 测试：`STEAMAC_UPDATE_URL` 覆盖 URL（release JSON 或 `/releases` 数组，`http(s)://` 或
-`file://`；同时为开发版启动器启用启动检查），`STEAMAC_FAKE_VERSION` 覆盖启动器版本；FIFO `--control-fifo`：`update check|startup|state`、`update press
-download|skip|later|ok|releases`、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。
+`file://`；同时为开发版启动器启用启动检查），`STEAMAC_FAKE_VERSION` 覆盖启动器版本，`STEAMAC_UPDATE_FEED` 覆盖应用内更新的 feed；FIFO `--control-fifo`：`update check|startup|state`、`update press
+download|skip|later|ok|releases|cancel|hide|install|quit`（`install` / `quit`：安装并重新启动 / 退出时安装）、`update dump PNG`（窗口与 `-with-vm.png`——与虚拟机窗口同屏）。本地 feed：见[分发](#分发dmg)。
 
 ## 游戏统计
 
@@ -848,7 +1030,12 @@ Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs
   Simulator `game.log.txt` 最近 512 KiB。ATS 模拟器崩溃请将其 Steam 启动选项设为
   `FEX_SILENTLOG=0 FEX_OUTPUTLOG=/home/steamos/fex-amtrucks.log %command%`，复现后报告；
   收集器收录该日志最近 512 KiB。事后移除启动选项。
-  没有 Proton 日志时，归档会提示：要看到 Windows 游戏本身的失败，需设置启动选项 `PROTON_LOG=1 %command%`、复现一次并重新报告。
+  大于 1 MiB 的 Proton 日志经脱敏后按启动部分前 1 MiB 加最后 1 MiB 收集，中间省略，
+  以免运行时头部信息与首个异常被崩溃处理程序刷屏淹没（STEAMAC-AA）。桌面模式报告记录 `plasmashell`、KWin
+  和 Discover 是否运行，以及允许列表中的渲染器标志，不含进程参数或环境变量值（STEAMAC-9P）。
+  启动器日志记录游戏模式的启用资格（运行时与磁盘上的 Info.plist 键）、原生全屏状态与经过筛选的
+  `gamepolicyd` 消息（STEAMAC-9V）。
+  没有 Proton 日志时，归档会提示：要看到 Windows 游戏本身的失败，需设置启动选项 `PROTON_LOG=1 %command%`、复现一次并重新报告。Unity Player 日志与 Easy Anti-Cheat 文本日志从正在运行或最近启动的游戏的 Proton 前缀，以及所有 Steam 库中最近修改的三个前缀中收集（每个前缀最多四个 256 KiB 的日志，不跟随指向前缀之外的链接，不含存档和二进制文件，经过脱敏）；这并不表示游戏或其反作弊可以运行。
   FEX 从 JIT 代码重抛模拟游戏的崩溃，core 堆栈只有匿名 AArch64 地址。要记录 x86_64 代码 fault 位置，创建
   `~/.local/share/Steam/steamapps/compatdata/<appid>/fex-emu/AppConfig/<可执行文件>.json`（ATS：
   `270880/fex-emu/AppConfig/amtrucks.json`），内容为
@@ -889,7 +1076,7 @@ Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs
 
 | 目录 | 内容 |
 |---|---|
-| `host/moltenvk/` | MoltenVK utmapp `geometry-shaders` @05604465 + 补丁：depth_clip_enable、YCbCr 数组、null 描述符、zink/DXVK 用几何着色器模拟（顶点步长、实例化、邻接、扇、SCALED 格式、打包顶点格式：10-10-10-2、RG11B10F、RGB9E5、BGRA8、`gl_in`）、transform feedback（DXVK 流输出）与其查询（SO 统计）、拷贝时查询结果可用（经 Venus 的 DXVK 遮挡查询）、缓冲地址向量分量原子（BDA，vkd3d-proton）、任意 texel 偏移 texel 缓冲（vkd3d-proton）、robustness2 小推导描述符缓冲写入、可变计数描述符数组做运行时数组（Metal 给 vkd3d-proton 每堆数组留 32 MB 与程序）、辅助缓冲分配、Metal 资源延迟释放、管线缓存 UUID 中补丁哈希、绑定中的 `VK_NULL_HANDLE` 描述符集、片元输出转换为颜色附件的数值类型、没有顶点属性的顶点着色器输入读取零、经浮点格式读取整数顶点输入、辅助函数中 YCbCr 采样器的 null 检查、拒绝不支持的 texel buffer 格式；`repro/` 测试跑在 Metal validation 下（KosmicKrisp 也可：`REPRO_DRIVER=kosmickrisp`）；`bench/run.sh <libdir>…` 比较构建间性能；`bench/shaders.sh <dump or pack>` 从 MoltenVK 着色器转储或 `bench/pack.py` 制作的 10% 采样度量游戏着色器编译（SPIR-V → MSL、MSL → Metal 库、管线状态；冷/热、多线程） |
+| `host/moltenvk/` | MoltenVK utmapp `geometry-shaders` @05604465 + 补丁：depth_clip_enable、YCbCr 数组、null 描述符、zink/DXVK 用几何着色器模拟（顶点步长、实例化、邻接、扇、SCALED 格式、打包顶点格式：10-10-10-2、RG11B10F、RGB9E5、BGRA8、`gl_in`）、transform feedback（DXVK 流输出）与其查询（SO 统计）、拷贝时查询结果可用（经 Venus 的 DXVK 遮挡查询）、缓冲地址向量分量原子（BDA，vkd3d-proton）、曲面细分下按分量打包的顶点输出（dxil-spirv，Rift Apart）、任意 texel 偏移 texel 缓冲（vkd3d-proton）、robustness2 小推导描述符缓冲写入、可变计数描述符数组做运行时数组（Metal 给 vkd3d-proton 每堆数组留 32 MB 与程序）、辅助缓冲分配、Metal 资源延迟释放、管线缓存 UUID 中补丁哈希、绑定中的 `VK_NULL_HANDLE` 描述符集、片元输出转换为颜色附件的数值类型、没有顶点属性的顶点着色器输入读取零、经浮点格式读取整数顶点输入、辅助函数中 YCbCr 采样器的 null 检查、拒绝不支持的 texel buffer 格式；`repro/` 测试跑在 Metal validation 下（KosmicKrisp 也可：`REPRO_DRIVER=kosmickrisp`）；`bench/run.sh <libdir>…` 比较构建间性能；`bench/shaders.sh <dump or pack>` 从 MoltenVK 着色器转储或 `bench/pack.py` 制作的 10% 采样度量游戏着色器编译（SPIR-V → MSL、MSL → Metal 库、管线状态；冷/热、多线程） |
 | `host/kosmickrisp/` | KosmicKrisp（Mesa 主线 @ce576c29）+ 未合并 Mesa MR 与 steamac 补丁（见“Vulkan 驱动”），运行时无 LLVM（`-Dllvm=disabled`，`mesa_clc` 来自首构建），`-Db_ndebug=true`；仅 macOS 26+ |
 | `host/dxmt/` | 锁定的 DXMT + 补丁、静态 LLVM 15、原生 airconv、Windows DLL 交叉编译与客户机载荷；`build.sh fetch llvm native host pe client payload` |
 | `wmtr/` | BSD-3-Clause 的 winemetal 远程调用：客户机 `winemetal.so` 经 virtio-gpu 到达 `libwmtr_host.dylib`（链接 DXMT/LLVM），在虚拟机视图中呈现 CAMetalLayer |
@@ -899,7 +1086,7 @@ Worker URL 填入 `host/launcher/Info.plist`（`SteamacGameStatsURL`）与 `docs
 | `host/launcher/` | `steamac-vm`（Swift/AppKit）：Metal 窗口（可选 MetalFX 超分辨率）、带开关机进度的“FX STEAM LAUNCHER”覆盖层、客户机分辨率 = 窗口大小（Retina 分辨率下 × 屏幕 backing scale）恒定 DPI（EDID 取自屏幕物理尺寸）、键盘/鼠标/平板、GameController.framework 的客户机 Xbox 360 / DualSense / DualShock 4 手柄带振动或 DualSense 裸 HID 直通（`fx.pad`）、gvproxy 网络、客户机重启则虚拟机重启、`--perf-stats` |
 | `guest/kernel/` | Linux 7.2.9，全编入，4K 页，16K blob 节点对齐，FEX 用 Apple TSO；直通 DualSense 用的 uhid、hidraw 与 `hid-playstation`（含其所需 LED 类） |
 | `guest/mesa/` | 来自锁定的 Mesa：Venus ICD aarch64 版（Proton、gamescope、zink）与 x86_64/i386 版（FEX 图形提供方）；两者中替换原装的 zink GL 栈（libgallium、GLX/EGL/GBM），带 `guest/mesa/patches/` 中的回移植（Mesa 6abefa51：仅顶点布局变化时 zink 也重建管线；Metal 上的 Venus 缺 `VK_EXT_vertex_input_dynamic_state`，否则 GL 游戏会用过时的顶点格式绘制）；模拟游戏 x86_64 fault 上报器（`/usr/lib/steamac/x86_64/fault-report.so`） |
-| `guest/initramfs/` | 启动阶段 = “bootloader”：带尝试计数的 A/B 槽选择、partsets、`/etc` 与 `/usr` 覆盖；启动器创建磁盘的初始预配（`steamac.provision=1`：initramfs 中静态 mkfs.fat、mke2fs、btrfstune）；`steamac.ssh=0`——无 SSH 服务器；启动器配置载荷（`steamac.config=1`）——新 `steamos` 密码；`steamac.tz=`——`/etc/localtime` 中的 Mac 时区；Flatpak 沙箱用 untouched procfs `/run/steamac/proc` |
+| `guest/initramfs/` | 启动阶段 = “bootloader”：带尝试计数的 A/B 槽选择、partsets、`/etc` 与 `/usr` 覆盖；启动器创建磁盘的初始预配（`steamac.provision=1`：initramfs 中静态 mkfs.fat、mke2fs、btrfstune）；`steamac.ssh=0`——无 SSH 服务器；启动器配置载荷（`steamac.config=1`）——新 `steamos` 密码；`steamac.tz=`——`/etc/localtime` 中的 Mac 时区；Flatpak 沙箱用 untouched procfs `/run/steamac/proc`；`steamac.share=`——共享文件夹的运行时挂载单元（virtio-fs `macshare`，见“共享文件夹”） |
 | `guest/layer/` | `/usr` 上虚拟机层（只读 erofs）：文件化 `splctl`、RAUC 安全 post-install、`VARIANT_ID=steamdeck`、DRM 上 gamescope 会话、桌面模式（gamescope 嵌套 Plasma）、Frame 硬件服务屏蔽、`fx-progress-agent` 进度代理（Rust，`guest/progress-agent/`，`fx.progress` virtio-console 端口）与其 root 服务（`fx.clock`、`fx.sleep`、`fx.pad` 上 uinput 或 uhid 手柄）、短关机超时、二维码 Steam 登录模式（无记住账号时用 Steam Deck 客户端）、可选 Steam 客户端分支（`/etc/steamac/steam-client-branch`）、Steam 着色器后台处理默认开启（`steam-shader-defaults`）、Steam 空闲屏保默认关闭（`steam-idle-screensaver`）、重置系统及用户管理器的固定 CPU 亲和性掩码，使服务在使用更新后的层启动时继承虚拟机可用的 vCPU |
 | `scripts/` | 构建 `work/out/steamos.img`：Valve 分区布局的 GPT（esp、efi-A/B、rootfs-A/B、var-A/B、home）；`scripts/test/provision-test-disk.sh`——对照 Docker 磁盘的预配开发测试；`scripts/test/vkd3d-tiled.sh`——在临时虚拟机中端到端检查 D3D12 平铺资源与功能级别（Proton 11.0 的 vkd3d-proton 测试、`d3d12-caps`、`vk-minmax`） |
 
@@ -958,7 +1145,7 @@ STEAMAC-2Y；Vulkan 未定义这些值）。现在这类输入读取零（`repro
 角色不可见；现在以与格式兼容的类型读取属性并重新解释其位（`repro/vertex_input.c`）。通过带不可变 YCbCr
 采样器的辅助函数进行鲁棒采样不再编译失败（`is_null_texture`，STEAMAC-3W；`repro/texture_helpers.c`）。
 Metal 没有对应像素格式的 texel buffer view 返回 `VK_ERROR_FORMAT_NOT_SUPPORTED`，而不是使虚拟机进程中止
-（Uncharted，STEAMAC-3Q；`repro/texel_buffer.c`）。图形管线失败时记录每个阶段的入口点、着色器哈希与反射接口，
+（Uncharted，STEAMAC-3Q；`repro/texel_buffer.c`）；宽度超过 Metal 2^28 个纹素的 texel buffer view 返回 `VK_ERROR_OUT_OF_DEVICE_MEMORY`，而不是在 Metal 描述符校验中中止（STEAMAC-9E/79）。图形管线失败时记录每个阶段的入口点、着色器哈希与反射接口，
 用于没有 MSL 的链接错误和编译器错误。
 
 SteamOS 根文件系统不动：所有改动来自 initramfs 与层。因此
@@ -1003,7 +1190,12 @@ SteamOS 根文件系统不动：所有改动来自 initramfs 与层。因此
 ## 限制
 
 - DirectX 12（vkd3d-proton）：KosmicKrisp 支持功能级别 12_0（Tiled Resources Tier 2：基于 Metal 4
-  placement sparse resources 的稀疏绑定与驻留），MoltenVK 为 11_0；两者均为 SM 6.0（Apple GPU 不支持 SM 6.2+）。
+  placement sparse resources 的稀疏绑定与驻留），MoltenVK 为 11_0；两者均为 SM 6.0（Apple GPU 不支持 SM 6.2+：
+  vkd3d-proton 同时要求 FP32 非规格化数的归零与保留，而 Metal 不保留非规格化数）。
+  virglrenderer 会记录各设备报告的 SM 6.0 前提条件与 SM 6.2 非规格化数属性。Age of Mythology: Retold
+  会因 "Shader model too low (Shader_Model_60)" 停止（STEAMAC-AB/AC/A0）；在使用 KosmicKrisp 的 M5 Max 上，
+  启动选项 `VKD3D_DISABLE_EXTENSIONS= VKD3D_SHADER_MODEL=6_6 %command%` 曾绕过此检查进入菜单；
+  这只覆盖所报告的着色器模型，对局期间游戏仍可能退出。
   同一渲染通道内，写入稀疏深度附件未绑定图块的深度仍保留在 Apple 的图块内存中。
   Stellar Blade 试玩版（UE4）在 M4 Max 上以 1280×800 达到 60 FPS；首次运行需数分钟编译着色器。
   Proton ARM64 中的 x86 模拟器（FEX）曾在 20 分钟后因其受保护 .exe 的 DEP 检查停止运行。
@@ -1012,7 +1204,7 @@ SteamOS 根文件系统不动：所有改动来自 initramfs 与层。因此
   也没有 Dolby Atmos 编码。多声道布局时，`audio-layout` 在 WirePlumber 启动前读取 VirtIO ALSA 播放声道映射，用对应的 Pro Audio 输出替换 SteamOS 的立体声策略
   （定时器调度、播放与录音分组：宿主设备时钟彼此独立）；立体声宿主保持 SteamOS 原有配置。默认输出变化或所选设备被拔出时播放立即跟随，布局每秒复查一次，
   按物理扬声器路由并以余量缩混缺少的扬声器。客户机声道映射在一次启动内固定（virtio-snd/ALSA 会缓存）：要让游戏看到更多声道或新布局需重启虚拟机。
-  `STEAMAC_SND_DUMP` 记录扬声器映射前的客户机 PCM。5.1.2 已在硬件上测试，7.1.4 仅有自动化映射测试；麦克风仍为单声道/立体声且未经测试。
+  `STEAMAC_SND_DUMP` 记录扬声器映射前的客户机 PCM。5.1.2 已在硬件上测试，7.1.4 仅有自动化映射测试；麦克风仍为单声道/立体声且未经测试。麦克风录音使用 macOS 默认输入。若麦克风权限被拒、没有输入设备或 CoreAudio 在 200 毫秒内未能启动，录音以普通音频错误失败，不会阻塞虚拟机的声音控制队列；播放不受录音影响（STEAMAC-8N/8P：卡住的录音启动曾使客户机的录音缓冲区无法归还）。录音日志包含输入设备和麦克风权限状态。
 - 屏蔽虚拟机的反作弊不可用。
 - `logicOp` 不可用（MoltenVK 分支中私有 Metal API 编不过）；zink 报警告。
 

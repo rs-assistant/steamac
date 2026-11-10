@@ -45,6 +45,8 @@
 #   steamac.ssh=0|1    0: no SSH server this boot (see "SSH switch"); 1/absent: as enabled
 #   steamac.tz=ZONE    the Mac's time zone: /etc/localtime follows it (see "time zone")
 #   steamac.clock24=0|1  Mac 12/24-hour format (layer mac-clock-format before Steam/Plasma)
+#   steamac.share=PATH mount the launcher's virtio-fs "macshare" at PATH, a subdirectory of
+#                      /home/steamos/ (see "shared folder")
 #   init=PATH          init in the new root (default /sbin/init)
 
 PATH=/bin
@@ -84,18 +86,27 @@ mkdir -p /run/steamac /run/udev/rules.d /run/systemd/system /run/systemd/user
 CMDLINE=$(cat /proc/cmdline)
 # Split at the first standalone "--": kernel parameters before, init args after.
 KARGS=; IARGS=; HAVE_DDASH=
+set -f   # split the words only: a '*' or '?' in a parameter must not expand to file names
 for _a in $CMDLINE; do
     if [ -n "$HAVE_DDASH" ]; then IARGS="$IARGS $_a"
     elif [ "$_a" = -- ]; then HAVE_DDASH=1
     else KARGS="$KARGS $_a"
     fi
 done
+set +f
 getarg() { # getarg key -> value of the last key=value kernel parameter
     _v=
+    set -f
     for _a in $KARGS; do
         case $_a in "$1="*) _v=${_a#*=} ;; esac
     done
+    set +f
     echo "$_v"
+}
+is_sha512_crypt() { # is_sha512_crypt <s>: exactly $6$[rounds=N$]<salt 1-16>$<86-char hash>, one line
+    case $1 in *"
+"*) return 1 ;; esac
+    printf '%s\n' "$1" | grep -Eqx '\$6\$(rounds=[0-9]{1,9}\$)?[./0-9A-Za-z]{1,16}\$[./0-9A-Za-z]{86}'
 }
 msg "kernel cmdline: $CMDLINE"
 
@@ -263,7 +274,8 @@ prov_parse() { # prov_parse <provision.env> -> P_<KEY>
     [ -n "$P_STEAMOS_BUILDID" ] || prov_fail "payload: no STEAMOS_BUILDID"
     echo "$P_MACHINE_ID" | grep -qx '[0-9a-f]\{32\}' || prov_fail "payload: bad MACHINE_ID"
     # empty = no password: the stock shadow stays (release disks)
-    case $P_PASSWORD_HASH in ''|'$6$'*) ;; *) prov_fail "payload: PASSWORD_HASH is not a SHA-512 crypt hash" ;; esac
+    [ -z "$P_PASSWORD_HASH" ] || is_sha512_crypt "$P_PASSWORD_HASH" \
+        || prov_fail "payload: PASSWORD_HASH is not a SHA-512 crypt hash"
     echo "$P_HOSTNAME" | grep -qx '[a-zA-Z0-9-]\{0,63\}' || prov_fail "payload: bad HOSTNAME"
     P_DISK_GUID=$(echo "$P_DISK_GUID" | tr 'A-F' 'a-f')
     prov_is_uuid "$P_DISK_GUID" || prov_fail "payload: bad DISK_GUID"
@@ -287,9 +299,10 @@ esp_disk() { # the whole disk holding esp, e.g. /dev/vda
     _p=${_p%/*}; echo "/dev/${_p##*/}"
 }
 set_shadow_hash() { # set_shadow_hash <src shadow> <dst> <hash>: dst = src with steamos's password field = hash
-    awk -F: -v OFS=: -v h="$3" '$1 == "steamos" { $2 = h } { print }' "$1" > "$2.new" \
+    # The hash goes through ENVIRON, not -v (which would interpret backslash escapes).
+    H="$3" awk -F: -v OFS=: '$1 == "steamos" { $2 = ENVIRON["H"] } { print }' "$1" > "$2.new" \
         && chmod 0600 "$2.new" \
-        && awk -F: -v h="$3" '$1 == "steamos" && $2 == h { f = 1 } END { exit !f }' "$2.new" \
+        && H="$3" awk -F: '$1 == "steamos" && $2 == ENVIRON["H"] { f = 1 } END { exit !f }' "$2.new" \
         && sync "$2.new" && mv -f "$2.new" "$2" \
         || { rm -f "$2.new"; return 1; }
 }
@@ -501,10 +514,7 @@ apply_config() {
     _g=$(prov_disk_guid "$_disk") || { cfg_fail "$_disk has no readable primary GPT header"; return 1; }
     C_DISK_GUID=$(echo "$C_DISK_GUID" | tr 'A-F' 'a-f')
     [ "$C_DISK_GUID" = "$_g" ] || { cfg_fail "payload DISK_GUID $C_DISK_GUID does not match $_disk ($_g)"; return 1; }
-    case $C_PASSWORD_HASH in
-        '$6$'*) ;;
-        *) cfg_fail "PASSWORD_HASH is not a SHA-512 crypt hash"; return 1 ;;
-    esac
+    is_sha512_crypt "$C_PASSWORD_HASH" || { cfg_fail "PASSWORD_HASH is not a SHA-512 crypt hash"; return 1; }
     msg "config: payload on $PAYLOAD_DEV for $_disk"
     for _cs in A B; do
         _vd=$(part_dev "var-$_cs") && mount -t ext4 "$_vd" "$CFG_TMP/var" \
@@ -869,9 +879,15 @@ fi
 # one); anything after it belongs to init and is kept verbatim at the end.
 # steamac.ssh=0 adds systemd.ssh_auto=no: systemd-ssh-generator then creates
 # none of its sshd-unix-local/-vsock/-unix-export sockets (see "SSH switch").
+# SSH is on only with an explicit steamac.ssh=1: absent or invalid means 0.
 SSH=$(getarg steamac.ssh)
-case $SSH in 0|1|"") ;; *) warn "ignoring steamac.ssh='$SSH' (0 or 1)"; SSH= ;; esac
+case $SSH in
+    0|1) ;;
+    "") msg "steamac.ssh not given: SSH server off (pass steamac.ssh=1 to enable)"; SSH=0 ;;
+    *) warn "ignoring steamac.ssh='$SSH' (0 or 1): SSH server off"; SSH=0 ;;
+esac
 _keep=
+set -f
 for _a in $KARGS; do
     case $_a in
         root=*|rauc.slot=*|steamos.efi=*|init=*) ;;
@@ -879,6 +895,7 @@ for _a in $KARGS; do
         *) _keep="$_keep $_a" ;;
     esac
 done
+set +f
 [ "$SSH" = 0 ] && _keep="$_keep systemd.ssh_auto=no"
 echo "${_keep# } root=PARTLABEL=rootfs-$SLOT rauc.slot=$SLOT steamos.efi=PARTUUID=$EFI_UUID init=$INIT${HAVE_DDASH:+ --$IARGS}" > /run/steamac/cmdline
 
@@ -896,13 +913,17 @@ if [ -n "$HAVE_LAYER" ] && [ "$(getarg steamac.nomask)" != 1 ]; then
     done
     msg "runtime-masked $_n units"
 fi
+# Valve's crash/journal uploader stays masked even with steamac.nomask=1: reports of this VM
+# must not be sent to Valve (masks.d/frame-hardware.list lists it for the normal case).
+ln -sfn /dev/null /run/systemd/system/steamos-log-submitter.service
 
 # ---------------------------------------------------------------- SSH switch
 # Contract "SSH policy": the launcher passes steamac.ssh=0|1 on every boot
-# (release app default 0). 0 = no SSH server at all this boot: runtime masks
-# (independent of steamac.nomask) for the rootfs's sshd.service and every unit
-# systemd-ssh-generator (systemd 257) can create, on top of systemd.ssh_auto=no
-# above. 1 or absent = sshd as enabled in /etc (var-X upper enables it).
+# (release app default 0). 0, absent or invalid = no SSH server at all this
+# boot: runtime masks (independent of steamac.nomask) for the rootfs's
+# sshd.service and every unit systemd-ssh-generator (systemd 257) can create,
+# on top of systemd.ssh_auto=no above. Only 1 = sshd as enabled in /etc (var-X
+# upper enables it).
 if [ "$SSH" = 0 ]; then
     for _unit in sshd.service sshd@.service sshd.socket \
                  sshd-unix-local.socket sshd-unix-local@.service sshd-vsock.socket sshd-vsock@.service \
@@ -911,6 +932,54 @@ if [ "$SSH" = 0 ]; then
         ln -sfn /dev/null "/run/systemd/system/$_unit"
     done
     msg "steamac.ssh=0: SSH server disabled for this boot (sshd units runtime-masked)"
+fi
+
+# ---------------------------------------------------------------- shared folder
+# Contract "shared folder": with Settings > Advanced "Shared folder" the launcher adds
+# a virtio-fs device tagged macshare (krun_add_virtiofs4) and passes
+# steamac.share=<guest path>. A runtime mount unit (lives only for this boot, like
+# the masks above) mounts it after SteamOS has populated the home. Wanted, not
+# required, by multi-user.target: a boot without the device still completes.
+SHARE=$(getarg steamac.share)
+if [ -n "$SHARE" ]; then
+    # Same rule as the launcher (Options.isValidShareMount): a subdirectory of /home/steamos/
+    # (never the home itself), no empty, "." or ".." components, [A-Za-z0-9/_.-] only.
+    _ok=0
+    case $SHARE in
+        */|*//*|*/.|*/..|*/./*|*/../*|*[!A-Za-z0-9/_.-]*) ;;
+        /home/steamos/?*) _ok=1 ;;
+    esac
+    if [ $_ok = 1 ]; then
+        # systemd-escape --path: strip the leading /, "-" -> \x2d, "/" -> "-", a leading "." -> \x2e
+        _unit=$(printf %s "${SHARE#/}" | sed 's/-/\\x2d/g; s,/,-,g; s/^\./\\x2e/').mount
+        # steamos-create-homedir exits if the home already exists. Do not let
+        # systemd create a root-owned home first and skip its skeleton/ownership.
+        # That service runs after basic.target: opt out of mount units' implicit
+        # Before=local-fs.target to avoid a cycle, preserving shutdown ordering.
+        mkdir -p /run/systemd/system/multi-user.target.wants
+        cat > "/run/systemd/system/$_unit" <<EOF
+[Unit]
+Description=Shared Mac folder (steamac.share)
+Documentation=https://github.com/fxgl/steamac
+DefaultDependencies=no
+Requires=steamos-create-homedir.service
+After=steamos-create-homedir.service
+RequiresMountsFor=/home
+Before=systemd-user-sessions.service umount.target
+Conflicts=umount.target
+
+[Mount]
+What=macshare
+Where=$SHARE
+Type=virtiofs
+Options=defaults
+TimeoutSec=15
+EOF
+        ln -sfn "../$_unit" "/run/systemd/system/multi-user.target.wants/$_unit"
+        msg "shared folder: virtio-fs macshare at $SHARE ($_unit)"
+    else
+        warn "ignoring steamac.share='$SHARE' (a subdirectory of /home/steamos/, no . or .. components, [A-Za-z0-9/_.-] only)"
+    fi
 fi
 
 # ---------------------------------------------------------------- switch_root

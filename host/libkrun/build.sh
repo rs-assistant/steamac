@@ -25,6 +25,29 @@
 # requested refresh (e.g. 3840x2160 at 240 Hz); legacy modes retain their base EDID.
 # Patch 0021 adds the required DisplayID 1.3 Display Parameters block while
 # preserving the high-refresh timing bytes and legacy EDID output.
+# Patch 0022 distinguishes local virtio-net socket bind failures from proxy connect
+# failures, retaining endpoint paths and errno (STEAMAC-82: eth0 Binding(ENOSPC)
+# was ambiguous). It does not retry or change activation failure behavior.
+# Patch 0023 exposes a non-realtime guest playback tap for Moonlight, before host
+# volume/mute and physical speaker mapping; unregister waits for pending delivery.
+# Patch 0024 isolates microphone/TCC work from playback and virtio's control queue.
+# Capture START has a 200 ms deadline and returns IO_ERR on device/permission failure;
+# late starts are canceled, STOP never waits for HAL, RELEASE returns queued buffers.
+# test/capture-guest.sh checks repeated capture failure/recovery and surviving playback
+# inside a fresh throwaway VM; unavailable input is an ordinary logged audio error.
+# Patch 0025 bumps imago to 0.2.6 (libkrun/libkrun#980, the open 1.19.8 cherry-picks).
+# imago 0.2.3 shrinks a raw image when a discard or write-zeroes reaches its last
+# byte (libkrun/libkrun#949). steamos.img keeps the backup GPT after home, so this
+# is hardening, not a fix for observed data loss on steamac's layout. It also
+# protects future guest-wide discard and the planned Reclaim Disk Space (#78).
+# Patches 0026-0030 (this fork) bound guest-controlled virtio input:
+# 0026 refuses RESOURCE_MAP_BLOB of a resource that is already mapped (a second map orphaned the
+# first guest mapping, and UNREF then freed host pages the guest still mapped).
+# 0027 limits Rutabaga2D resources to 2D textures of 1..=16384 x 1..=16384 (checked stride/size).
+# 0028 ignores virtio-console PORT_READY/PORT_OPEN for port ids past the configured ports.
+# 0029 converts CoreAudio capture in passes of at most 64 KiB, not one guest-sized allocation.
+# 0030 updates virtio-gpu scanout bits only after SET_SCANOUT validated and configured the new
+# resource, and clears (not toggles) the previous resource's bit.
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -113,6 +136,12 @@ done
 	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_audio
+	# Blocked capture setup must time out; late starts stop, and errors complete promptly.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features snd --test macos_capture
+	# A missing proxy identifies connect (not bind), its endpoint path and errno.
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features net --lib -- missing_proxy_reports_connect_operation_and_peer_path
 	# wmtr context type against a stand-in executor (fence order per ring, the WAITs of each
 	# EXECBUFFER, blob limits and detach/reuse/footprint, host ABI version, executor start and
 	# teardown, command checks).

@@ -1,0 +1,37 @@
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 12:00:00 +0000
+Subject: [PATCH] virtio-gpu: macos: refuse MAP_BLOB of a resource that is
+ already mapped
+
+A second RESOURCE_MAP_BLOB at another offset succeeded and overwrote
+shmem_offset, orphaning the first hv_vm_map. UNMAP_BLOB then removed
+only the second mapping, and RESOURCE_UNREF, seeing no mapping left,
+munmapped the host pages the hypervisor still mapped into the guest
+at the first offset. Linux's virtio-gpu maps a blob once; reject the
+second map instead.
+---
+ src/devices/src/virtio/gpu/virtio_gpu.rs | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/devices/src/virtio/gpu/virtio_gpu.rs b/src/devices/src/virtio/gpu/virtio_gpu.rs
+index ef9e9af..de5eebd 100644
+--- a/src/devices/src/virtio/gpu/virtio_gpu.rs
++++ b/src/devices/src/virtio/gpu/virtio_gpu.rs
+@@ -1317,6 +1317,17 @@ impl VirtioGpu {
+         shm_region: &VirtioShmRegion,
+         offset: u64,
+     ) -> VirtioGpuResult {
++        // A second MAP_BLOB of a mapped resource would orphan the first guest mapping:
++        // UNMAP_BLOB only removes the last one, and UNREF would then munmap host pages
++        // the hypervisor still maps into the guest.
++        if self
++            .resources
++            .get(&resource_id)
++            .is_some_and(|r| r.shmem_offset.is_some())
++        {
++            error!("resource {resource_id}: already mapped into the guest");
++            return Err(ErrUnspec);
++        }
+         let map_info = self.rutabaga.map_info(resource_id).map_err(|_| ErrUnspec)?;
+         let mapping = self.blob_host_mapping(resource_id)?;
+         let resource = self

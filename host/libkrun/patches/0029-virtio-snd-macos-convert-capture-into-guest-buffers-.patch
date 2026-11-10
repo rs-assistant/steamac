@@ -1,0 +1,45 @@
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 12:00:00 +0000
+Subject: [PATCH] virtio-snd: macos: convert capture into guest buffers in
+ bounded passes
+
+pump_input resized its output vector to all the room left in the
+guest's capture buffer. The guest chooses that buffer's length (a
+descriptor of up to 4 GiB), so it chose how much the VMM allocated, and
+mDataByteSize (u32) could truncate the size.
+
+Convert at most 64 KiB (whole frames) per pass. A buffer with more room
+left is already filled by further passes of the loop, and a pass that
+produces nothing still ends it, so capture is otherwise unchanged.
+---
+ src/devices/src/virtio/snd/audio_backends/coreaudio.rs | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+index af3f2df..c626139 100644
+--- a/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
++++ b/src/devices/src/virtio/snd/audio_backends/coreaudio.rs
+@@ -366,6 +366,9 @@ fn microphone_permission() -> (isize, &'static str) {
+ const RING_BYTES: usize = 1 << 20;
+ /// Capture: largest IO slice the input callback accepts (frames).
+ const CAPTURE_MAX_FRAMES: usize = 16384;
++/// Capture: most bytes converted into a guest buffer per pass of pump_input (rounded down to
++/// whole frames, at least one). The guest chooses the buffer's length, up to 4 GiB.
++const CAPTURE_PASS_BYTES: usize = 64 << 10;
+ const HOUSEKEEPING: Duration = Duration::from_secs(1);
+ /// Non-zero status the converter input proc returns when the ring has no more frames now.
+ const NO_MORE_INPUT: OSStatus = 0x6e6f6d6f; // 'nomo'
+@@ -2224,9 +2227,12 @@ impl HostStream {
+         let mut streams = streams.write().unwrap();
+         let guest = &mut streams[self.id];
+         let fb = fmt.frame_bytes() as usize;
++        // Bound each pass (and `out`) instead of sizing it to the whole guest buffer: a buffer
++        // with more room left is filled by further passes of the loop below (`continue`).
++        let max_pass = (CAPTURE_PASS_BYTES / fb).max(1) * fb;
+         let mut out = Vec::new();
+         while let Some(buf) = guest.buffers.front_mut() {
+-            let space = (buf.desc_len() as usize).saturating_sub(buf.pos) / fb * fb;
++            let space = ((buf.desc_len() as usize).saturating_sub(buf.pos) / fb * fb).min(max_pass);
+             if space > 0 {
+                 out.resize(space, 0);
+                 let mut packets = (space / fb) as u32;

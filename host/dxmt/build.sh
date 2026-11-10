@@ -39,6 +39,12 @@
 # buffer made outside the remoted calls, and a context destroyed with a render encoder open, all
 # checked on the GPU's results. 1.9.5 refused every blit and compute list (Death's Door: black frame,
 # magenta menu arrows); 1.9.6 aborts on the nil vertex function and the open encoder.
+# Presentation (STEAMAC-98/9B): CAMetalLayer.nextDrawable can legitimately return nil; DXMT
+# forwards it to presentDrawable, which aborts the entire VM. The host skips both nil-present
+# variants before frame statistics/capture hooks, leaving the buffer's remaining work and commit
+# intact. Acquisition failures log layer size/visibility/attachment/timeout, and skipped presents
+# log call/slot; each diagnostic is capped at four per context. wmtr_dxmt_test uses a real zero-size
+# layer, checks both present variants and recovery after restoring its size on the same context.
 # WMTR_PRESENT_TRACE=1 logs actual drawable presentedTime/submit time/minimum duration for display
 # pacing investigations; the launcher's display-pacing diagnostics distinguish physical and guest Hz.
 #
@@ -116,7 +122,12 @@ step_fetch() {
     git -C "$src" init -q
     for p in "$here"/patches/*.patch; do git -C "$src" apply "$p" || die "$(basename "$p") does not apply"; done
     # meson's vcs_tag runs `git describe`; give it the fork commit the patches reproduce
-    git -C "$src" add -A && git -C "$src" -c user.name=build -c user.email=build@localhost \
+    # Fixed dates in UTC and no user git config/hooks/excludes: the same inputs give the same
+    # commit hash on every machine and time zone.
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$src" add -A \
+        && GIT_AUTHOR_DATE="1767225600 +0000" GIT_COMMITTER_DATE="1767225600 +0000" \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$src" -c user.name=build -c user.email=build@localhost \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null \
         commit -q -m "DXMT ${DXMT_FORK_COMMIT:0:12} (pinned base + host/dxmt/patches)"
 }
 
