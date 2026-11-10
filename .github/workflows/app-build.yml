@@ -6,6 +6,8 @@
 #   app           host stack + launcher, then bundle.sh: work/out/FX Steam Launcher.app (macOS 26)
 # Build receipts (scripts/guest-artifacts.py) travel with the artifacts as tar files (permissions
 # are part of the receipts); bundle.sh checks them against this checkout before it seals the app.
+# The Mesa jobs also hand over what verify.sh and manifest.sh read from work/build/mesa-venus
+# (the vkprobe/fault-report test programs, package and toolchain lists).
 #
 # Differences from a local build:
 # - The app job has no Docker. licenses.sh asks Docker four questions about the builder and Rust
@@ -77,7 +79,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/mesa-aarch64.tar" \
-            work/out/mesa-venus work/out/mesa-aarch64.inputs.json
+            work/out/mesa-venus work/out/mesa-aarch64.inputs.json \
+            work/build/mesa-venus/bin/vkprobe-aarch64 \
+            work/build/mesa-venus/packages-aarch64.txt work/build/mesa-venus/toolchain-aarch64.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
           name: mesa-aarch64
@@ -111,7 +115,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo tar -C "$GITHUB_WORKSPACE" -cf "$RUNNER_TEMP/mesa-x86.tar" \
-            work/out/mesa-venus work/out/mesa-x86.inputs.json
+            work/out/mesa-venus work/out/mesa-x86.inputs.json \
+            work/build/mesa-venus/bin/vkprobe-x86_64 work/build/mesa-venus/bin/vkprobe-i386 work/build/mesa-venus/bin/fault-report-test \
+            work/build/mesa-venus/packages-x86.txt work/build/mesa-venus/toolchain-x86.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
           name: mesa-x86
