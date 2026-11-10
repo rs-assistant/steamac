@@ -61,8 +61,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/krun/include"
           cp "$src"/include/libkrun.h "$src"/include/libkrun_display.h "$src"/include/libkrun_input.h "$RUNNER_TEMP/krun/include/"
 
-      - name: zstd sources
-        run: host/launcher/fetch-zstd.sh
+      - name: Pinned C sources (zstd, ENet, nanors)
+        run: |
+          host/launcher/fetch-zstd.sh
+          host/launcher/fetch-enet.sh
+          host/launcher/fetch-nanors.sh
 
       - name: Compile the launcher (no link; libkrun itself is not built here)
         run: |
