@@ -2,6 +2,8 @@
 
 **English** · [Русский](README.ru.md) · [简体中文](README.zh.md)
 
+This fork (rs-assistant/steamac): build and install steps, and what it changes — [FORK.md](FORK.md) (繁體中文).
+
 On macOS 15 (Sequoia), Valve's actual SteamOS for Steam Frame runs in a lightweight VM on
 Hypervisor.framework (libkrun) with GPU acceleration via Venus.
 
