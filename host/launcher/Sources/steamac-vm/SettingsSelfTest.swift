@@ -163,7 +163,7 @@ enum SettingsSelfTest {
             let data = "/System/Volumes/Data" + real
             if fm.fileExists(atPath: data) { check(Options.shareRefusal(data) == .home, "\(data) is the home folder") }
 
-            // Next start: a refused saved folder boots without the share, a refused --share stops.
+            // Next start: a refused folder, saved or given with --share, boots without the share.
             let folder = root + "/share"
             try fm.createDirectory(atPath: folder, withIntermediateDirectories: false)
             let boot = root + "/boot"
@@ -177,7 +177,9 @@ enum SettingsSelfTest {
                 settings.sharedFolder = refused
                 let (options, _) = try Options.resolve(base, settings: settings)
                 check(options.share == nil && words(options, "steamac.share").isEmpty, "saved \(refused) is not shared")
-                check((try? Options.resolve(base + ["--share", refused], settings: settings)) == nil, "--share \(refused) is refused")
+                let given = try? Options.resolve(base + ["--share", refused], settings: settings).0
+                check(given != nil && given?.share == nil && words(given!, "steamac.share").isEmpty,
+                      "--share \(refused) boots without the share")
             }
             settings.sharedFolder = root + "/share-link"
             try fm.createSymbolicLink(atPath: root + "/share-link", withDestinationPath: folder)

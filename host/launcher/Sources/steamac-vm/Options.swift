@@ -722,7 +722,12 @@ struct Options {
         if given("--no-sound") { ov[.soundEnabled] = "--no-sound" } else { sound = s.soundEnabled }
         if given("--share") || given("--no-share") {
             ov[.sharedFolder] = share.map { "--share \($0)" } ?? "--no-share"
-            // validate() refuses a --share folder that is missing or never shared (shareRefusal).
+            // validate() refuses a --share folder that is missing. One that is never shared
+            // (shareRefusal) boots without the share, as a saved one does below.
+            if let given = share, let refusal = Options.shareRefusal(given) {
+                if !isSelftest { log("--share \(given): \(refusal.reason), never shared; booting without the share") }
+                share = nil
+            }
             share = share.map(Options.resolvedSharePath)
         } else {
             // Like the DXMT library: a folder that is gone (external drive unplugged, renamed)

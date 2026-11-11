@@ -628,7 +628,7 @@ The launcher refuses to share `/`, `/System`, `/Library`, `/Users`, `/Applicatio
 `~/Library` or anything inside it. The check resolves symbolic links and also compares by
 device and inode, so another spelling of the same folder is refused too. Settings → Advanced does
 not save such a folder and says why; one saved earlier (or set with `control set`) is logged and
-the VM starts without the share; an explicit `--share` of one refuses to start. Share a folder of
+the VM starts without the share, as it does for an explicit `--share` of one. Share a folder of
 its own, for example a new folder for games.
 
 ## Controller
