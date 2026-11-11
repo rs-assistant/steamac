@@ -98,6 +98,7 @@ jobs:
           run --selftest-stall --selftest-out "$out/stall"
           run --selftest-pill --selftest-out "$out/pill"
           run --selftest-game-layers
+          run --selftest-stream-net
           exit $fail
 
       - name: KosmicKrisp (optional)

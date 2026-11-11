@@ -301,7 +301,8 @@ session; with **Additional controllers** off, a Mac controller waits until the s
 The Mac controllers return to their usual slots afterwards.
 No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
 `--selftest-stream` runs the component protocol/media checks (including the LAN filter, the
-pairing window and the connection limits) without booting a VM.
+pairing window and the connection limits) without booting a VM; `--selftest-stream-net` runs only
+the network ones (no screen capture or hardware encoding; CI runs it).
 
 ## Settings window
 
