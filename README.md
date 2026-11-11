@@ -263,9 +263,19 @@ and [discovery envelope framing](https://github.com/OpenSourceLAN/steam-discover
 **Settings → Streaming → Enable Moonlight streaming** turns on the built-in GameStream host
 immediately; it is **off by default** and available only in the windowed VM process. Install
 [Moonlight](https://moonlight-stream.org/) on another device on your trusted local network,
-allow macOS **Local Network** access and incoming connections, and select this Mac in Moonlight
-(or add the Mac's LAN address manually). Enter the four-digit PIN shown on that device in the
-pairing window on the Mac, then launch **SteamOS** in Moonlight.
+allow macOS **Local Network** access and incoming connections, choose **Pair a Device…** in the
+Streaming tab, and select this Mac in Moonlight (or add the Mac's LAN address manually). Enter
+the four-digit PIN shown on that device in the pairing window on the Mac, then launch
+**SteamOS** in Moonlight.
+
+Pairing is accepted only while it is open: for two minutes after **Pair a Device…** or until one
+device pairs (**Stop Pairing** closes it early). Requests outside that window, or while another
+device's PIN prompt is up, are refused without a prompt. The host accepts connections only from
+the Mac itself and from addresses on the subnet of one of its active LAN interfaces (Wi-Fi,
+Ethernet; IPv6 link-local or the interface's on-link prefix), not from VPN tunnels (utun, ipsec,
+ppp) or other routed networks; refusals are logged, rate-limited. The pairing/serverinfo ports
+take at most 16 connections, 4 per address; one without a complete request for 10 s (or open
+90 s) is closed.
 
 The Streaming tab shows host/session status and paired devices with their pairing dates.
 **Revoke** removes a device's access and ends its current stream; it must pair again.
@@ -290,7 +300,8 @@ Moonlight controllers take the first SteamOS player slots ahead of Mac controlle
 session; with **Additional controllers** off, a Mac controller waits until the stream ends.
 The Mac controllers return to their usual slots afterwards.
 No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
-`--selftest-stream` runs the component protocol/media checks without booting a VM.
+`--selftest-stream` runs the component protocol/media checks (including the LAN filter, the
+pairing window and the connection limits) without booting a VM.
 
 ## Settings window
 

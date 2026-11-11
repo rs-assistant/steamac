@@ -12,6 +12,9 @@ final class GameStreamHost: ObservableObject, StreamHTTPDelegate {
     @Published private(set) var status: Status = .off
     @Published private(set) var clients: [StreamClient] = []
     @Published private(set) var pairing: StreamPairingRequest?
+    /// Moonlight may pair (Settings > Streaming > Pair a Device…): for two minutes or until one
+    /// device pairs. Requests outside it are refused without a prompt.
+    @Published private(set) var pairingOpen = false
     private let environment: StreamEnvironment
     private let hostName: String
     private var identity: StreamIdentity?
@@ -45,6 +48,7 @@ final class GameStreamHost: ObservableObject, StreamHTTPDelegate {
             enabled = false
             pairing?.cancel()
             pairing = nil
+            pairingOpen = false
             endSession()
             http?.stop()
             status = .off
@@ -64,6 +68,13 @@ final class GameStreamHost: ObservableObject, StreamHTTPDelegate {
             log("stream: listener startup failed: \(error)")
         }
     }
+
+    func openPairing() {
+        guard enabled, let http else { return }
+        http.openPairing()
+    }
+
+    func closePairing() { http?.closePairing() }
 
     func revoke(fingerprint: String) {
         if session?.launch.client.fingerprint == fingerprint { endSession() }
@@ -126,6 +137,8 @@ final class GameStreamHost: ObservableObject, StreamHTTPDelegate {
         pairing = nil
         clients = store.clients
     }
+
+    func streamPairingWindowChanged(open: Bool) { pairingOpen = open && enabled }
 
     private func updateServerState() {
         http?.update(StreamServerState(busy: session != nil, clientFingerprint: session?.launch.client.fingerprint, appID: session == nil ? 0 : 1))

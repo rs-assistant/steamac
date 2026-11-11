@@ -1445,6 +1445,22 @@
         }
       }
     },
+    "Choose Pair a Device…, then open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите «Сопрячь устройство…», затем откройте Moonlight на устройстве и выберите этот Mac. Введите четырёхзначный PIN из Moonlight в окне сопряжения на Mac, затем выберите SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择“配对设备…”，然后在设备上打开 Moonlight 并选择此 Mac。在 Mac 的配对窗口中输入 Moonlight 显示的四位 PIN，然后选择 SteamOS。"
+          }
+        }
+      }
+    },
     "Choose a SteamOS disk image" : {
       "localizations" : {
         "ru" : {
@@ -4086,6 +4102,22 @@
         }
       }
     },
+    "Moonlight can pair only while pairing is open. Only devices on this Mac's local network can connect; connections over VPN or from other networks are refused." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moonlight может выполнить сопряжение, только пока оно открыто. Подключаться могут только устройства из локальной сети этого Mac; подключения через VPN или из других сетей отклоняются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在配对开启期间 Moonlight 才能配对。只有此 Mac 所在本地网络中的设备可以连接；通过 VPN 或来自其他网络的连接会被拒绝。"
+          }
+        }
+      }
+    },
     "Moonlight streaming is available while SteamOS is running in a window. It is unavailable in headless mode or without a running VM." : {
       "localizations" : {
         "ru" : {
@@ -4663,22 +4695,6 @@
         }
       }
     },
-    "Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Откройте Moonlight на устройстве и выберите этот Mac. Введите четырёхзначный PIN из Moonlight в окне сопряжения на Mac, затем выберите SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在设备上打开 Moonlight 并选择此 Mac。在 Mac 的配对窗口中输入 Moonlight 显示的四位 PIN，然后选择 SteamOS。"
-          }
-        }
-      }
-    },
     "Open Releases Page" : {
       "localizations" : {
         "ru" : {
@@ -4807,6 +4823,22 @@
         }
       }
     },
+    "Pair a Device…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопрячь устройство…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对设备…"
+          }
+        }
+      }
+    },
     "Pair a device" : {
       "localizations" : {
         "ru" : {
@@ -4851,6 +4883,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已配对客户端"
+          }
+        }
+      }
+    },
+    "Pairing is open until a device pairs, for at most two minutes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжение открыто, пока не будет сопряжено устройство, но не дольше двух минут."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对已开启，直到有设备完成配对，最长两分钟。"
           }
         }
       }
@@ -7326,6 +7374,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止"
+          }
+        }
+      }
+    },
+    "Stop Pairing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановить сопряжение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止配对"
           }
         }
       }

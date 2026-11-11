@@ -4,6 +4,9 @@ import Foundation
 enum StreamSelfTest {
     static func run() -> Never {
         let components: [(String, () -> [String])] = [
+            ("LAN filter", LANNetworks.selfCheck),
+            ("pairing window", StreamPairingWindow.selfCheck),
+            ("HTTP connection limits", StreamHTTPLimits.selfCheck),
             ("HTTP and pairing", StreamHTTPServer.selfCheck),
             ("control", StreamControl.selfCheck),
             ("RTSP", StreamRTSP.selfCheck),

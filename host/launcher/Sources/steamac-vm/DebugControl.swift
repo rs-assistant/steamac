@@ -46,6 +46,8 @@ import Foundation
 ///                         and the guest's last rumble
 ///   stats …               game statistics (GameStatsStore.control: state, flush, ask, press
 ///                         share|decline, dump PATH, reset-question)
+///   stream-pair open|close   open Moonlight pairing (as Settings > Streaming > Pair a Device…) /
+///                         close it and end a pairing in progress
 ///   stream-pin PIN        submit the four-digit PIN for a pending Moonlight pairing
 ///   stream-status         log Moonlight listener/session and pairing status
 enum DebugControl {
@@ -214,6 +216,13 @@ enum DebugControl {
             do { try png.write(to: URL(fileURLWithPath: out)); log("control: settings window dumped to \(out)") }
             catch { log("control: settings dump failed: \(error)") }
         case "restart": lifecycle.requestRestart()
+        case "stream-pair":
+            guard let host = settingsWindow?.context.streamHost else {
+                log("stream: unavailable outside the windowed VM process"); break
+            }
+            if args.first == "close" { host.closePairing() }
+            else if args.first == "open" { host.openPairing() }
+            else { log("control: stream-pair open|close") }
         case "stream-pin":
             guard let request = settingsWindow?.context.streamHost?.pairing else {
                 log("stream: no pending pairing"); break
@@ -227,7 +236,7 @@ enum DebugControl {
             guard let host = settingsWindow?.context.streamHost else {
                 log("stream: unavailable outside the windowed VM process"); break
             }
-            log("stream: status=\(host.status) clients=\(host.clients.count) pairing=\(host.pairing?.clientName ?? "none")")
+            log("stream: status=\(host.status) clients=\(host.clients.count) pairingOpen=\(host.pairingOpen) pairing=\(host.pairing?.clientName ?? "none")")
         case "close": wc.window.performClose(nil)
         case "suspend": if !(lifecycle.suspender?.suspended ?? true) { lifecycle.menuSuspend() }
         case "resume": lifecycle.suspender?.resume(origin: "control")

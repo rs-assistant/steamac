@@ -399,26 +399,10 @@ final class RemotePlayRelay {
         return String(cString: buffer)
     }
 
+    /// Broadcast-capable, not loopback, point-to-point or a tunnel (LANNetworks): VPN tunnels
+    /// (utun, ipsec, ppp) are no LAN, and the streaming forwards are bound to exactly these addresses.
     private static func lanInterfaces() -> [Interface] {
-        var first: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&first) == 0 else { return [] }
-        defer { freeifaddrs(first) }
-        var result: [Interface] = [], current = first
-        while let pointer = current {
-            let item = pointer.pointee; current = item.ifa_next
-            let flags = Int32(bitPattern: item.ifa_flags)
-            // Broadcast-capable, not loopback or point-to-point: VPN tunnels (utun, ipsec, ppp)
-            // are no LAN, and the streaming forwards are bound to exactly these addresses.
-            guard flags & IFF_UP != 0, flags & IFF_BROADCAST != 0,
-                  flags & (IFF_LOOPBACK | IFF_POINTOPOINT) == 0,
-                  !String(cString: item.ifa_name).hasPrefix("utun"),
-                  let address = item.ifa_addr, address.pointee.sa_family == AF_INET,
-                  let mask = item.ifa_netmask else { continue }
-            let ip = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr
-            let netmask = UnsafeRawPointer(mask).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr
-            result.append(Interface(address: ip, mask: netmask))
-        }
-        return result
+        LANNetworks.current().ipv4.map { Interface(address: $0.address, mask: $0.mask) }
     }
 
     private static func hostAddresses() -> Set<UInt32> {

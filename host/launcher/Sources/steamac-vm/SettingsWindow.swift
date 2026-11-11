@@ -308,6 +308,13 @@ private struct StreamingHostForm: View {
         }
     }
 
+    private var hostListening: Bool {
+        switch host.status {
+        case .listening, .streaming: return true
+        case .off, .failed: return false
+        }
+    }
+
     var body: some View {
         Form {
             Section {
@@ -322,7 +329,19 @@ private struct StreamingHostForm: View {
                 }
             }
             Section("Pair a device") {
-                Text("Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS.")
+                Text("Choose Pair a Device…, then open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS.")
+                if host.pairingOpen {
+                    HStack {
+                        Text("Pairing is open until a device pairs, for at most two minutes.")
+                        Spacer()
+                        Button("Stop Pairing") { host.closePairing() }
+                    }
+                } else {
+                    Button("Pair a Device…") { host.openPairing() }
+                        .disabled(!hostListening)
+                }
+                Text("Moonlight can pair only while pairing is open. Only devices on this Mac's local network can connect; connections over VPN or from other networks are refused.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Allow Local Network access when macOS asks. Streaming stops while SteamOS is suspended or asleep and can be started again after it resumes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
