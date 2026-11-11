@@ -322,7 +322,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Games | **Share game statistics** (off until you agree, see “Game statistics”); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
-| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-library`, `--no-share-library`, see “Shared folder”) |
+| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + read-only + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-ro`, `--share-rw`, `--share-library`, `--no-share-library`, see “Shared folder”) |
 
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
@@ -557,6 +557,11 @@ games stored on the Mac load at the Mac disk's speed, and what SteamOS writes th
 at once. Off by default (no folder chosen). Command line: `--share DIR`, `--share-mount PATH`,
 `--no-share` for one launch.
 
+**Read-only** (off by default, next start; `--share-ro` / `--share-rw` for one launch) uses
+libkrun's read-only virtio-fs server: SteamOS can read the folder, every write fails with
+`EROFS`. A read-only share is not used as a Steam library (Steam needs to write there), so
+`steamac.share_library=1` is not passed and the launcher logs why.
+
 **Use as a Steam library** is on by default when a folder is shared (next start).
 SteamOS creates **`<mount>/SteamLibrary/steamapps`** and registers `<mount>/SteamLibrary`
 before Steam starts; no Desktop Mode “Add Drive” dialog is needed. In Steam's Storage settings
@@ -598,7 +603,8 @@ guest sees its own uid/gid on every file, so the `steamos` user reads and writes
 mapping; no DAX window) and passes `steamac.share=PATH` on the kernel command line. The initramfs
 ("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, no empty, `.` or `..`
 components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount unit
-(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`) wanted by
+(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `Options=defaults,nosuid,nodev`,
+`TimeoutSec=15`) wanted by
 `multi-user.target`. It requires and runs after `steamos-create-homedir.service`, before user
 sessions: on a fresh disk SteamOS must create and populate the user's home before systemd creates
 the mount point, otherwise the home would be root-owned and its skeleton skipped. The unit has
@@ -608,11 +614,22 @@ lives for that boot only, like the runtime unit masks. A folder that is not ther
 (external drive unplugged, renamed) is logged and skipped — the launcher starts without the share;
 only an explicit `--share` refuses to start. The Settings row shows it in red as not found.
 
-**Security.** Per libkrun's security model, virtio-fs does not confine the guest to the shared
-directory: on macOS the lookup does not filter `..`, and the launcher is not sandboxed. With a
-share set, root in SteamOS (anything that gains root there: a game, a Flatpak, a Proton exploit)
-can potentially read anything your Mac user can read, and write where that user can write. Share
-only with a SteamOS you trust, and keep the share off when you do not need it. SSH is not involved.
+**Security.** SteamOS can create, change and delete anything inside the shared folder, and
+only there. Upstream libkrun's macOS virtio-fs server did not confine the guest (it accepted `..`
+and `/` in names and followed symbolic links); libkrun patch 0031 rejects every guest-supplied name
+that is not a single directory entry and never follows a symlink on the Mac (open `O_NOFOLLOW`,
+chmod/xattr without following, `linkat` without `AT_SYMLINK_FOLLOW`). A symlink in the share,
+including one SteamOS made, is only resolved inside SteamOS. Programs on the Mac that open such a
+symlink (Finder, a Mac game) do follow it, so do not run things from the share on the Mac that
+SteamOS could have changed. The share is mounted `nosuid,nodev` in SteamOS.
+
+The launcher refuses to share `/`, `/System`, `/Library`, `/Users`, `/Applications`, `/private`,
+`/Volumes` (and the data volume's root), your home folder, any folder that contains it, and
+`~/Library` or anything inside it. The check resolves symbolic links and also compares by
+device and inode, so another spelling of the same folder is refused too. Settings → Advanced does
+not save such a folder and says why; one saved earlier (or set with `control set`) is logged and
+the VM starts without the share; an explicit `--share` of one refuses to start. Share a folder of
+its own, for example a new folder for games.
 
 ## Controller
 

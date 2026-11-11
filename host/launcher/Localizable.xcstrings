@@ -87,6 +87,28 @@
         }
       }
     },
+    "%@ (not shared: %@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ (not shared: %2$@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (не открыта для SteamOS: %2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@（不共享：%2$@）"
+          }
+        }
+      }
+    },
     "%@ / %@ MB · %@ MB/s" : {
       "localizations" : {
         "en" : {
@@ -530,18 +552,18 @@
         }
       }
     },
-    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust." : {
+    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. SteamOS can change or delete anything in the folder but nothing outside it (symbolic links are not followed on the Mac). The home folder, ~/Library, system folders and folders containing the home folder cannot be shared." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. Безопасность: virtio-fs не ограничивает SteamOS этой папкой; с включённой общей папкой root в SteamOS потенциально может прочитать всё, что доступно вашему пользователю Mac. Открывайте папку только той SteamOS, которой доверяете."
+            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. SteamOS может изменить или удалить что угодно в этой папке, но ничего за её пределами (символические ссылки на Mac не разыменовываются). Домашнюю папку, ~/Library, системные папки и папки, содержащие домашнюю, открыть нельзя."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。安全：virtio-fs 不会把 SteamOS 限制在此文件夹内；设置共享后，SteamOS 中的 root 可能读取你的 Mac 用户能读取的任何内容。仅与你信任的 SteamOS 共享。"
+            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。SteamOS 可以更改或删除此文件夹中的任何内容，但无法访问文件夹之外的内容（Mac 上不会跟随符号链接）。个人文件夹、~/Library、系统文件夹以及包含个人文件夹的文件夹无法共享。"
           }
         }
       }
@@ -4550,6 +4572,22 @@
         }
       }
     },
+    "Not shared: %@. SteamOS can change or delete anything in a shared folder, so choose a folder of its own, for example a new folder for games." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не открыта для SteamOS: %@. SteamOS может изменить или удалить что угодно в общей папке, поэтому выберите отдельную папку, например новую папку для игр."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不共享：%@。SteamOS 可以更改或删除共享文件夹中的任何内容，请选择一个专用文件夹，例如新建一个游戏文件夹。"
+          }
+        }
+      }
+    },
     "Not supported on this Mac's GPU." : {
       "localizations" : {
         "ru" : {
@@ -5236,6 +5274,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原始 GPT 磁盘映像（如 steamos.img）。会保留在原位置。"
+          }
+        }
+      }
+    },
+    "Read-only" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только чтение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只读"
           }
         }
       }
@@ -6954,6 +7008,22 @@
         }
       }
     },
+    "SteamOS can read the folder but not change it. A read-only folder is not used as a Steam library (that needs write access)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS может читать папку, но не изменять её. Папка только для чтения не используется как библиотека Steam (для этого нужен доступ на запись)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 可以读取此文件夹，但不能更改。只读文件夹不会用作 Steam 库（这需要写入权限）。"
+          }
+        }
+      }
+    },
     "SteamOS could not start" : {
       "localizations" : {
         "en" : {
@@ -8139,6 +8209,22 @@
         }
       }
     },
+    "This folder cannot be shared" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эту папку нельзя открыть для SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法共享此文件夹"
+          }
+        }
+      }
+    },
     "This libkrun has no sound support (SND=1)." : {
       "localizations" : {
         "ru" : {
@@ -8911,6 +8997,38 @@
         }
       }
     },
+    "a folder that contains the home folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "папка, в которой находится домашняя папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含个人文件夹的文件夹"
+          }
+        }
+      }
+    },
+    "a system folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "системная папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统文件夹"
+          }
+        }
+      }
+    },
     "another SteamOS disk is being created with the download cache %@: wait for it to finish or cancel it" : {
       "localizations" : {
         "ru" : {
@@ -9227,6 +9345,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "home 分区容量必须为 8 至 4096 GiB"
+          }
+        }
+      }
+    },
+    "inside ~/Library" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "внутри ~/Library"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "位于 ~/Library 内"
           }
         }
       }
@@ -9726,6 +9860,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下载 SteamOS 时宗卷空间不足（%@）：请释放一些空间后重试；下载将从中断处继续"
+          }
+        }
+      }
+    },
+    "the whole home folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вся домашняя папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整个个人文件夹"
           }
         }
       }

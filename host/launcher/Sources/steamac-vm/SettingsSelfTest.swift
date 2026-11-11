@@ -12,7 +12,8 @@ import SwiftUI
 /// that a guest process's GPU teardown is no crash report (LineScanner), and the automatic VM size
 /// (VMSizing) on simulated Macs, the update check's version ordering and release selection,
 /// the Mac time zone and clock format kernel parameters (MacTime), and the clipboard port's frame codec and
-/// concealed-item filter (ClipboardSync), plus shared-library preferences and boot arguments.
+/// concealed-item filter (ClipboardSync), plus shared-library preferences and boot arguments, and
+/// the folders that are never shared and the read-only share.
 enum SettingsSelfTest {
     /// Use a private preferences domain, like ProvisionSelfTest's disk-selection checks.
     private static func sharedLibrarySelfCheck() -> [String] {
@@ -101,6 +102,123 @@ enum SettingsSelfTest {
         return failures
     }
 
+    /// Folders that are never shared (Options.shareRefusal) and the read-only share, in a private
+    /// preferences domain like sharedLibrarySelfCheck.
+    private static func sharedFolderSelfCheck() -> [String] {
+        let domain = "es.fxgam.steamac.selftest-shared-folder-\(UUID().uuidString)"
+        let previousDomain = getenv("STEAMAC_DEFAULTS_DOMAIN").map { String(cString: $0) }
+        setenv("STEAMAC_DEFAULTS_DOMAIN", domain, 1)
+        let settings = LauncherSettings()
+        defer {
+            settings.defaults.removePersistentDomain(forName: domain)
+            if let previousDomain { setenv("STEAMAC_DEFAULTS_DOMAIN", previousDomain, 1) }
+            else { unsetenv("STEAMAC_DEFAULTS_DOMAIN") }
+        }
+        var failures: [String] = []
+        func check(_ ok: Bool, _ name: String) {
+            if !ok { failures.append("shared folder: \(name)") }
+        }
+        func refusal(_ path: String, home: String) -> String {
+            Options.shareRefusal(path, home: home).map { "\($0)" } ?? "allowed"
+        }
+        func expect(_ path: String, home: String, _ want: Options.ShareRefusal?) {
+            let got = Options.shareRefusal(path, home: home)
+            check(got == want, "\(path): \(refusal(path, home: home)), expected \(want.map { "\($0)" } ?? "allowed")")
+        }
+        let fm = FileManager.default
+        let root = NSTemporaryDirectory() + "steamac-shared-folder-\(UUID().uuidString)"
+        do {
+            // root/home (a stand-in home) with Library/LaunchAgents and Games; root/home-link -> home,
+            // home/Games/lib -> home/Library.
+            let home = root + "/home"
+            defer { try? fm.removeItem(atPath: root) }
+            try fm.createDirectory(atPath: home + "/Library/LaunchAgents", withIntermediateDirectories: true)
+            try fm.createDirectory(atPath: home + "/Games", withIntermediateDirectories: true)
+            try fm.createSymbolicLink(atPath: root + "/home-link", withDestinationPath: home)
+            try fm.createSymbolicLink(atPath: home + "/Games/lib", withDestinationPath: home + "/Library")
+
+            for folder in Options.refusedShareFolders { expect(folder, home: home, .system) }
+            expect(home, home: home, .home)
+            expect(home + "/", home: home, .home)
+            expect(home + "/Games/..", home: home, .home)
+            expect(home.uppercased(), home: home, .home)
+            expect(root + "/home-link", home: home, .home)
+            expect(root, home: home, .containsHome)
+            expect((root as NSString).deletingLastPathComponent, home: home, .containsHome)
+            expect(home + "/Library", home: home, .library)
+            expect(home + "/Library/LaunchAgents", home: home, .library)
+            expect(home + "/library/launchagents", home: home, .library)
+            expect(home + "/Library/Missing/Folder", home: home, .library)
+            expect(home + "/Games/lib", home: home, .library)
+            expect(home + "/Games", home: home, nil)
+            expect(home + "/Games/Missing", home: home, nil)
+            check(Options.resolvedSharePath(root + "/home-link") == Options.resolvedSharePath(home), "symlink resolved")
+
+            // This Mac's home, also under another spelling (the data volume's firmlinked path).
+            let real = NSHomeDirectory()
+            check(Options.shareRefusal(real) == .home, "home folder: \(refusal(real, home: real))")
+            check(Options.shareRefusal("~") == .home, "~ is the home folder")
+            check(Options.shareRefusal("~/Library/LaunchAgents") == .library, "~/Library/LaunchAgents")
+            check(Options.shareRefusal("/") == .system, "/")
+            let data = "/System/Volumes/Data" + real
+            if fm.fileExists(atPath: data) { check(Options.shareRefusal(data) == .home, "\(data) is the home folder") }
+
+            // Next start: a refused saved folder boots without the share, a refused --share stops.
+            let folder = root + "/share"
+            try fm.createDirectory(atPath: folder, withIntermediateDirectories: false)
+            let boot = root + "/boot"
+            try Data().write(to: URL(fileURLWithPath: boot))
+            let base = ["steamac-vm", "--kernel", boot, "--disk", boot, "--no-ssh",
+                        "--headless", "--frame-dump", "/dev/null", "--vulkan-driver", "moltenvk"]
+            func words(_ o: Options, _ prefix: String) -> [String] {
+                o.cmdline.split(separator: " ").filter { $0.hasPrefix(prefix) }.map(String.init)
+            }
+            for refused in [real, real + "/Library", "/"] {
+                settings.sharedFolder = refused
+                let (options, _) = try Options.resolve(base, settings: settings)
+                check(options.share == nil && words(options, "steamac.share").isEmpty, "saved \(refused) is not shared")
+                check((try? Options.resolve(base + ["--share", refused], settings: settings)) == nil, "--share \(refused) is refused")
+            }
+            settings.sharedFolder = root + "/share-link"
+            try fm.createSymbolicLink(atPath: root + "/share-link", withDestinationPath: folder)
+            let (linked, _) = try Options.resolve(base, settings: settings)
+            check(linked.share == Options.resolvedSharePath(folder), "a saved symlink shares the folder it points to")
+
+            // Read-only: off by default, a next-start setting, and no Steam library while on.
+            check(!settings.sharedReadOnly && !Options().shareReadOnly, "read-only is off by default")
+            check(LauncherSettings.Key.sharedReadOnly.nextStart, "read-only applies on next start")
+            check(settings.set("sharedReadOnly", "on") && settings.sharedReadOnly, "debug set read-only on")
+            check(LauncherSettings().sharedReadOnly, "read-only on is loaded")
+            check(!settings.set("sharedReadOnly", "invalid") && settings.sharedReadOnly, "invalid read-only value rejected")
+            settings.sharedFolder = folder
+            settings.sharedLibrary = true
+            let cases: [(String, Bool, [String], Bool, String?)] = [
+                ("saved off", false, [], false, nil),
+                ("saved on", true, [], true, nil),
+                ("CLI ro", false, ["--share-ro"], true, "--share-ro"),
+                ("CLI rw", true, ["--share-rw"], false, "--share-rw"),
+                ("CLI last ro", false, ["--share-rw", "--share-ro"], true, "--share-ro"),
+            ]
+            for (name, saved, flags, readOnly, override) in cases {
+                settings.sharedReadOnly = saved
+                let (options, overrides) = try Options.resolve(base + flags, settings: settings)
+                check(options.shareReadOnly == readOnly, "\(name): effective read-only")
+                check(overrides[.sharedReadOnly] == override, "\(name): CLI override note")
+                check(words(options, "steamac.share=").count == 1, "\(name): still shared")
+                check(words(options, "steamac.share_library=") == (readOnly ? [] : ["steamac.share_library=1"]),
+                      "\(name): Steam library only when writable")
+                check(settings.sharedReadOnly == saved, "\(name): one-run override did not change saved preference")
+            }
+            settings.resetAll()
+            check(!settings.sharedReadOnly && settings.defaults.object(forKey: "sharedReadOnly") == nil,
+                  "reset restores read-only off")
+        } catch {
+            failures.append("shared folder: \(error)")
+        }
+        log("selftest-settings: shared folder: \(failures.isEmpty ? "ok" : "FAIL: \(failures.joined(separator: "; "))")")
+        return failures
+    }
+
     static func run(_ o: Options, overrides: [LauncherSettings.Key: String]) -> Never {
         let settings = LauncherSettings.shared
         let profileID = 2147483646
@@ -127,7 +245,7 @@ enum SettingsSelfTest {
             + VMSizing.selfCheck()
             + UpdateChecker.selfCheck() + MacTime.selfCheck() + Options.shareMountSelfCheck() + KeyboardLayoutSync.selfCheck() + ClipboardSync.selfCheck() + GameProfile.selfCheck()
             + SteamControllerRouting.selfCheck() + GenericHIDRouting.selfCheck()
-            + sharedLibrarySelfCheck() + BootProgress.limitsSelfCheck()
+            + sharedLibrarySelfCheck() + sharedFolderSelfCheck() + BootProgress.limitsSelfCheck()
         let savedVirtualPad = settings.virtualPad
         let savedPadType = settings.padType
         context.needsInputMonitoring = true

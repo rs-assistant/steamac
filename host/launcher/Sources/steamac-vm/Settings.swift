@@ -35,14 +35,14 @@ final class LauncherSettings: ObservableObject {
         case streamingHost
         // Advanced
         case cpus, memMiB, sshEnabled, sshPort, network, lanRemotePlay, diskImage, sharedFolder, sharedMount, sharedLibrary,
-             steamosBranch, steamClient, vulkanDriver, wmtr, wmtrLibrary
+             sharedReadOnly, steamosBranch, steamClient, vulkanDriver, wmtr, wmtrLibrary
 
         var nextStart: Bool {
             switch self {
             case .openFullscreen, .dpiSource, .fixedDPI, .fixedWidthMM, .fixedHeightMM, .refreshRate,
                  .windowWidth, .windowHeight, .windowSizePreset, .retinaResolution, .metalHUD, .soundEnabled, .cpus, .memMiB, .sshEnabled,
                  .sshPort, .network, .lanRemotePlay,
-                 .diskImage, .sharedFolder, .sharedMount, .sharedLibrary, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
+                 .diskImage, .sharedFolder, .sharedMount, .sharedLibrary, .sharedReadOnly, .steamClient, .followMacTime, .vulkanDriver, .wmtr, .wmtrLibrary:
                 return true
             default:
                 return false
@@ -411,6 +411,9 @@ final class LauncherSettings: ObservableObject {
     @Published var sharedMount = Options.defaultShareMount { didSet { save(.sharedMount, sharedMount) } }
     /// Register SteamLibrary inside the shared folder on the next start (Options.shareLibrary).
     @Published var sharedLibrary = true { didSet { save(.sharedLibrary, sharedLibrary) } }
+    /// SteamOS may only read the shared folder (Options.shareReadOnly); off by default so the Steam
+    /// library in it keeps working.
+    @Published var sharedReadOnly = false { didSet { save(.sharedReadOnly, sharedReadOnly) } }
     /// SteamOS update branch "Create New Disk…" installs (atomupd vr/<branch>.json).
     @Published var steamosBranch = "stable" { didSet { save(.steamosBranch, steamosBranch) } }
     /// Steam client of the next start (`steamac.steam_client=`).
@@ -516,6 +519,7 @@ final class LauncherSettings: ObservableObject {
         string(.sharedMount, &sharedMount)
         if !Options.isValidShareMount(sharedMount) { sharedMount = Options.defaultShareMount }
         bool(.sharedLibrary, &sharedLibrary)
+        bool(.sharedReadOnly, &sharedReadOnly)
         string(.steamosBranch, &steamosBranch)
         if !DiskCreator.branches.contains(steamosBranch) {
             log("settings: SteamOS branch \(steamosBranch) is not offered; falling back to stable")
@@ -602,6 +606,7 @@ final class LauncherSettings: ObservableObject {
         case .sharedFolder: sharedFolder = text == "none" ? "" : text
         case .sharedMount: guard Options.isValidShareMount(text) else { return false }; sharedMount = text
         case .sharedLibrary: guard let b else { return false }; sharedLibrary = b
+        case .sharedReadOnly: guard let b else { return false }; sharedReadOnly = b
         case .steamosBranch: guard DiskCreator.branches.contains(text) else { return false }; steamosBranch = text
         case .steamClient: guard let v = SteamClient(rawValue: text) else { return false }; steamClient = v
         case .vulkanDriver: guard let v = VulkanDriver(rawValue: text) else { return false }; vulkanDriver = v
@@ -640,7 +645,7 @@ final class LauncherSettings: ObservableObject {
         lanRemotePlay = fresh.lanRemotePlay
         streamingHost = fresh.streamingHost
         diskImage = fresh.diskImage; sharedFolder = fresh.sharedFolder; sharedMount = fresh.sharedMount
-        sharedLibrary = fresh.sharedLibrary; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
+        sharedLibrary = fresh.sharedLibrary; sharedReadOnly = fresh.sharedReadOnly; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
         pinChangedDefaults()
@@ -676,6 +681,7 @@ final class LauncherSettings: ObservableObject {
             .soundEnabled: soundEnabled, .cpus: cpus, .memMiB: memMiB, .sshEnabled: sshEnabled, .sshPort: sshPort,
             .network: network, .lanRemotePlay: lanRemotePlay,
             .diskImage: diskImage, .sharedFolder: sharedFolder, .sharedMount: sharedMount, .sharedLibrary: sharedLibrary,
+            .sharedReadOnly: sharedReadOnly,
             .steamClient: steamClient.rawValue, .followMacTime: followMacTime,
             .vulkanDriver: vulkanDriver.rawValue, .wmtr: wmtr, .wmtrLibrary: wmtrLibrary,
         ]

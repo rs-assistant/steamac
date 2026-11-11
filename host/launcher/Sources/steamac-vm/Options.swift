@@ -32,11 +32,96 @@ struct Options {
     var shareMount = Options.defaultShareMount
     /// Register SteamLibrary inside the share once per guest path (`steamac.share_library=1`).
     var shareLibrary = true
+    /// --share-ro / --share-rw, Settings > Advanced "Read-only": libkrun's read-only virtio-fs server
+    /// (every write fails with EROFS). No SteamLibrary registration then: it needs write access.
+    var shareReadOnly = false
     static let defaultShareMount = "/home/steamos/MacShare"
     static func isReadableFolder(_ path: String) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             && FileManager.default.isReadableFile(atPath: path)
+    }
+
+    /// Why a folder is never shared. SteamOS can create, change and delete anything in the share
+    /// (libkrun patch 0031 keeps it inside the folder), so these would hand it the Mac's system
+    /// folders, other users' files, this user's whole home or ~/Library (LaunchAgents, keychains).
+    enum ShareRefusal: Equatable {
+        /// `refusedShareFolders`: /, /System, /Library, /Users, /Applications, /private, /Volumes
+        /// (and the data volume's root, another spelling of /).
+        case system
+        /// The home folder itself.
+        case home
+        /// A folder the home folder is inside of.
+        case containsHome
+        /// ~/Library or a folder inside it.
+        case library
+
+        /// For the log.
+        var reason: String {
+            switch self {
+            case .system: return "a system folder"
+            case .home: return "the home folder"
+            case .containsHome: return "contains the home folder"
+            case .library: return "inside ~/Library"
+            }
+        }
+
+        /// Settings > Advanced, after the folder.
+        var localizedReason: String {
+            switch self {
+            case .system: return String(localized: "a system folder")
+            case .home: return String(localized: "the whole home folder")
+            case .containsHome: return String(localized: "a folder that contains the home folder")
+            case .library: return String(localized: "inside ~/Library")
+            }
+        }
+    }
+    static let refusedShareFolders = ["/", "/System", "/Library", "/Users", "/Applications", "/private", "/Volumes",
+                                      "/System/Volumes", "/System/Volumes/Data"]
+
+    /// `path` with ~ expanded and symbolic links resolved (realpath(3), which also gives the real
+    /// letter case), or only standardized when it does not exist.
+    static func resolvedSharePath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        if let real = realpath(expanded, nil) {
+            defer { free(real) }
+            return String(cString: real)
+        }
+        return (expanded as NSString).standardizingPath
+    }
+
+    /// nil = `path` may be shared. Paths are compared after resolving symbolic links, ignoring
+    /// letter case (APFS is case-insensitive by default), and by device and inode, so another
+    /// spelling of the same folder (/System/Volumes/Data/Users/…, a symlink) is refused too.
+    static func shareRefusal(_ path: String, home: String = NSHomeDirectory()) -> ShareRefusal? {
+        let p = resolvedSharePath(path)
+        let h = resolvedSharePath(home)
+        let library = (h as NSString).appendingPathComponent("Library")
+        func fileID(_ path: String) -> (Int64, UInt64)? {
+            var st = stat()
+            guard stat(path, &st) == 0 else { return nil }
+            return (Int64(st.st_dev), UInt64(st.st_ino))
+        }
+        func same(_ a: String, _ b: String) -> Bool {
+            if a.lowercased() == b.lowercased() { return true }
+            guard let x = fileID(a), let y = fileID(b) else { return false }
+            return x == y
+        }
+        /// `path`, its parent, … up to "/".
+        func lineage(_ path: String) -> [String] {
+            var out = [path]
+            var cur = path
+            while cur != "/" && !cur.isEmpty {
+                cur = (cur as NSString).deletingLastPathComponent
+                out.append(cur)
+            }
+            return out
+        }
+        if refusedShareFolders.contains(where: { same(p, resolvedSharePath($0)) }) { return .system }
+        if same(p, h) { return .home }
+        if lineage(h).dropFirst().contains(where: { same($0, p) }) { return .containsHome }
+        if lineage(p).contains(where: { same($0, library) }) { return .library }
+        return nil
     }
     /// A subdirectory of the writable home, never the home itself.
     static let shareMountRoots = ["/home/steamos/"]
@@ -164,7 +249,7 @@ struct Options {
 
     static let usage = """
     usage: steamac-vm --kernel PATH [--initrd PATH] [--cmdline STR] --disk PATH[:ro] ... [--share DIR [--share-mount PATH] | --no-share]
-                      [--share-library | --no-share-library]
+                      [--share-library | --no-share-library] [--share-ro | --share-rw]
                       [--cpus N] [--mem MiB] [--display WxH] [--refresh HZ] [--headless]
                       [--log FILE] [--no-net] [--no-sound] [--ssh-port PORT | --no-ssh] [--shm-mib MiB]
                       [--gpu-flags HEX] [--gvproxy PATH] [--frame-dump PNG]
@@ -200,8 +285,10 @@ struct Options {
                            steamac.ssh/steam_client/tz are added unless STR sets them)
       --disk PATH[:ro]     raw virtio-blk disk; repeatable, order = vda, vdb, ...
       --share DIR          expose the Mac folder DIR to SteamOS as the virtio-fs device tagged "macshare"
-                           (default: Settings > Advanced "Shared folder", none unless chosen). virtio-fs does
-                           not confine the guest to DIR: root in SteamOS may reach what this Mac user can read
+                           (default: Settings > Advanced "Shared folder", none unless chosen). SteamOS can
+                           change anything inside DIR, but nothing outside it (symbolic links are not followed
+                           on the Mac). Never shared: /, /System, /Library, /Users, /Applications, /private,
+                           /Volumes, the home folder, a folder containing it, ~/Library and folders inside it
       --share-mount PATH   where SteamOS mounts the shared folder (default: Settings > Advanced "Mount point in
                            SteamOS", /home/steamos/MacShare): a subdirectory of /home/steamos/;
                            kernel cmdline steamac.share=PATH, the initramfs creates a mount unit for it on every boot
@@ -211,6 +298,9 @@ struct Options {
                            Proton requires symbolic links: APFS recommended, exFAT unsupported;
                            automatic registration skips shares without symbolic link support
       --no-share-library   do not create or register a shared Steam library this run
+      --share-ro           SteamOS can read but not change the shared folder (default: Settings > Advanced
+                           "Read-only", off); no Steam library is created or registered then
+      --share-rw           SteamOS can read and write the shared folder this run
       --cpus N             vCPUs (default: Settings > Advanced, automatic = this Mac's performance
                            cores, 2..8)
       --mem MiB            guest RAM (default: Settings > Advanced, automatic = half this Mac's RAM,
@@ -394,6 +484,8 @@ struct Options {
             case "--share-mount": o.shareMount = try value(a)
             case "--share-library": o.shareLibrary = true
             case "--no-share-library": o.shareLibrary = false
+            case "--share-ro": o.shareReadOnly = true
+            case "--share-rw": o.shareReadOnly = false
             case "--cpus": o.cpus = try int(a)
             case "--mem": o.memMiB = try int(a)
             case "--display":
@@ -558,7 +650,10 @@ struct Options {
             add("steamac.gfx", o.wmtrLibrary == nil ? "vulkan" : "dxmt")
             add("steamac.gpu_mib", String(VMSizing.gpuBudgetMiB(memMiB: o.memMiB)))
             add("steamac.share", o.share == nil ? nil : o.shareMount)
-            add("steamac.share_library", o.share != nil && o.shareLibrary ? "1" : nil)
+            if o.share != nil && o.shareLibrary && o.shareReadOnly {
+                log("shared folder: read-only; no SteamLibrary is created or registered (that needs write access)")
+            }
+            add("steamac.share_library", o.share != nil && o.shareLibrary && !o.shareReadOnly ? "1" : nil)
             if o.macTime {
                 add("steamac.tz", MacTime.zone)
                 add("steamac.clock24", MacTime.clock24.map { $0 ? "1" : "0" })
@@ -627,15 +722,21 @@ struct Options {
         if given("--no-sound") { ov[.soundEnabled] = "--no-sound" } else { sound = s.soundEnabled }
         if given("--share") || given("--no-share") {
             ov[.sharedFolder] = share.map { "--share \($0)" } ?? "--no-share"
+            // validate() refuses a --share folder that is missing or never shared (shareRefusal).
+            share = share.map(Options.resolvedSharePath)
         } else {
             // Like the DXMT library: a folder that is gone (external drive unplugged, renamed)
-            // must not stop the launcher; boot without the share and say so.
+            // must not stop the launcher; boot without the share and say so. The same for a folder
+            // that is never shared (saved before the check existed, or set with `control set`).
             share = nil
             if !s.sharedFolder.isEmpty {
-                if Options.isReadableFolder(s.sharedFolder) {
-                    share = s.sharedFolder
-                } else if !isSelftest {
-                    log("shared folder \(s.sharedFolder): not a readable folder; booting without the share")
+                if !Options.isReadableFolder(s.sharedFolder) {
+                    if !isSelftest { log("shared folder \(s.sharedFolder): not a readable folder; booting without the share") }
+                } else if let refusal = Options.shareRefusal(s.sharedFolder) {
+                    if !isSelftest { log("shared folder \(s.sharedFolder): \(refusal.reason), never shared; booting without the share") }
+                } else {
+                    // The folder itself, not a symlink to it (libkrun opens the root with O_NOFOLLOW).
+                    share = Options.resolvedSharePath(s.sharedFolder)
                 }
             }
         }
@@ -648,6 +749,11 @@ struct Options {
             ov[.sharedLibrary] = shareLibrary ? "--share-library" : "--no-share-library"
         } else {
             shareLibrary = s.sharedLibrary
+        }
+        if given("--share-ro") || given("--share-rw") {
+            ov[.sharedReadOnly] = shareReadOnly ? "--share-ro" : "--share-rw"
+        } else {
+            shareReadOnly = s.sharedReadOnly
         }
         if given("--no-gamepad") { ov[.virtualPad] = "--no-gamepad" }
         if let padType { ov[.padType] = "--pad \(padType.rawValue)" }
@@ -709,6 +815,9 @@ struct Options {
         if disks.count > 26 { throw OptionError("at most 26 disks") }
         if let share {
             guard Options.isReadableFolder(share) else { throw OptionError("--share: not a readable folder: \(share)") }
+            if let refusal = Options.shareRefusal(share) {
+                throw OptionError("--share: \(refusal.reason), never shared: \(share)")
+            }
             guard Options.isValidShareMount(shareMount) else {
                 throw OptionError("--share-mount: a subdirectory of \(Options.shareMountRoots.joined(separator: ", ")), no . or .. components, characters A-Z a-z 0-9 / _ . - only: \(shareMount)")
             }

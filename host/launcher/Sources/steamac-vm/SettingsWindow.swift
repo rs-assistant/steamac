@@ -1099,12 +1099,17 @@ private struct AdvancedTab: View {
         return (String(localized: "Default: none found"), false)
     }
 
-    /// The shared folder as shown (red when it is not a readable folder, like the disk image).
+    /// The shared folder as shown (red when it is not a readable folder, like the disk image, or
+    /// is never shared: Options.shareRefusal).
     private var shareStatus: (String, Bool) {
         if settings.sharedFolder.isEmpty { return (String(localized: "None"), true) }
-        let ok = Options.isReadableFolder(settings.sharedFolder)
         let path = (settings.sharedFolder as NSString).abbreviatingWithTildeInPath
-        return (ok ? path : String(localized: "\(path) (not found)"), ok)
+        guard Options.isReadableFolder(settings.sharedFolder) else { return (String(localized: "\(path) (not found)"), false) }
+        // Saved before the check existed (or with `control set`): the next start boots without it.
+        if let refusal = Options.shareRefusal(settings.sharedFolder) {
+            return (String(localized: "\(path) (not shared: \(refusal.localizedReason))"), false)
+        }
+        return (path, true)
     }
 
     private var mountTextValid: Bool { Options.isValidShareMount(mountText) }
@@ -1260,7 +1265,7 @@ private struct AdvancedTab: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Label2(title: "Shared folder",
-                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust."),
+                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. SteamOS can change or delete anything in the folder but nothing outside it (symbolic links are not followed on the Mac). The home folder, ~/Library, system folders and folders containing the home folder cannot be shared."),
                            now: false, key: .sharedFolder)
                     HStack {
                         Text(verbatim: shareStatus.0)
@@ -1270,12 +1275,18 @@ private struct AdvancedTab: View {
                         Button("Choose Folder…") { chooseSharedFolder() }
                         Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
                     }
+                    Toggle(isOn: $settings.sharedReadOnly) {
+                        Label2(title: "Read-only",
+                               detail: String(localized: "SteamOS can read the folder but not change it. A read-only folder is not used as a Steam library (that needs write access)."),
+                               now: false, key: .sharedReadOnly)
+                    }
+                    .disabled(settings.sharedFolder.isEmpty)
                     Toggle(isOn: $settings.sharedLibrary) {
                         Label2(title: "Use as a Steam library",
                                detail: String(localized: "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically."),
                                now: false, key: .sharedLibrary)
                     }
-                    .disabled(settings.sharedFolder.isEmpty)
+                    .disabled(settings.sharedFolder.isEmpty || settings.sharedReadOnly)
                     HStack {
                         Label2(title: "Mount point in SteamOS",
                                detail: String(localized: "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
@@ -1471,7 +1482,17 @@ private struct AdvancedTab: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         if !settings.sharedFolder.isEmpty { panel.directoryURL = URL(fileURLWithPath: settings.sharedFolder) }
-        if panel.runModal() == .OK, let url = panel.url { settings.sharedFolder = url.path }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Do not save a folder the next start would refuse (Options.shareRefusal); say why.
+        if let refusal = Options.shareRefusal(url.path) {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "This folder cannot be shared")
+            alert.informativeText = (url.path as NSString).abbreviatingWithTildeInPath + "\n\n"
+                + String(localized: "Not shared: \(refusal.localizedReason). SteamOS can change or delete anything in a shared folder, so choose a folder of its own, for example a new folder for games.")
+            alert.runModal()
+            return
+        }
+        settings.sharedFolder = url.path
     }
 
     private func chooseWmtrLibrary() {
