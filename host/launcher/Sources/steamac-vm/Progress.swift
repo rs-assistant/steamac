@@ -48,6 +48,18 @@ enum GuestGameEvent: Equatable {
 /// (host-side stages, shutdown detection) and with fx.progress lines from the guest agent.
 /// All methods run on the main thread.
 final class BootProgress {
+    /// The initramfs's FATAL reasons are one short sentence. The console line is guest text (up to
+    /// 512 KiB, LineSplitter) shown in the failure sheet and logged: control characters removed,
+    /// cut to `fatalReasonLimit` characters.
+    static let fatalReasonLimit = 300
+
+    static func fatalReason(_ text: Substring) -> String {
+        let printable = String(String.UnicodeScalarView(text.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0)
+        }))
+        return guestSnippet(printable.trimmingCharacters(in: .whitespaces), limit: fatalReasonLimit)
+    }
+
     /// Overall-bar segment for each stage: (start, weight) in percent.
     static let segments: [String: (Double, Double)] = [
         "vm": (0, 3), "kernel": (3, 7), "provision": (3, 7), "init": (10, 0), "systemd": (10, 20), "graphical": (30, 0),
@@ -159,7 +171,7 @@ final class BootProgress {
         guard state.phase == .boot else { return }
         guard state.stageId != "boot-failed" else { return }
         if let fatal = line.range(of: "steamac-init: FATAL: ") {
-            let reason = String(line[fatal.upperBound...])
+            let reason = BootProgress.fatalReason(line[fatal.upperBound...])
             var failed = state
             failed.stageId = "boot-failed"
             failed.title = String(localized: "SteamOS could not start")

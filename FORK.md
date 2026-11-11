@@ -129,8 +129,10 @@ cp -R "work/out/FX Steam Launcher.app" /Applications/
   - SSH：關閉（Settings → Advanced 可開啟）。
   - 分享遊戲統計：關閉；關閉時 Games 分頁也不會向統計服務查詢推薦設定。
   - LAN Remote Play：關閉；開啟時只在 Mac 的區域網路位址上接受連線。
-- **更新通知**：自己 build 的版本只會提示 upstream 有新版，不會自動安裝。要更新請依第 8 節重新 build，
-  不要安裝通知裡的 DMG（那是 upstream 的 build，不含這個 fork 的修改）。
+- **更新通知**：自己 build 的版本只會提示 upstream 有新版，不會自動安裝。視窗的按鈕是 **View Release**，
+  只會打開 upstream 的 release 頁面，不會下載 DMG。要更新請依第 8 節重新 build，不要安裝 upstream 的 DMG
+  （它不含這個 fork 的修改）。這個 fork 第一次啟動時會把「crash report 關閉」明確寫進設定檔，所以就算
+  裝了 upstream 版，crash report 仍維持關閉。
 - **log**：`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`
 
 ## 7. 建議確認的項目
@@ -163,8 +165,8 @@ SteamOS 磁碟不需要重建。
 - **預設值**：crash report、SSH 預設關閉；guest 的 `fx.progress` / `fx.clipboard` port 只給 session 使用者。
 - **供應鏈**：gvproxy、desync 由鎖定版本的原始碼 build，不下載預建 binary；快取的 rootfs 使用前重新驗證雜湊。
 - **Host 處理 guest 輸入**：尺寸、長度、數量都有上限（focus 尺寸、log、PNG、遊戲名稱、HID report、GPT）；
-  run dir 不沿用既有目錄；libkrun 追加 patch 0026–0030（重複映射、2D 資源尺寸、console port id、
-  音效擷取配置、scanout 記錄）。
+  run dir 不沿用既有目錄；libkrun 追加 patch 0026–0031（重複映射、2D 資源尺寸、console port id、
+  音效擷取配置、scanout 記錄、共享資料夾限制在資料夾內）。
 - **Guest**：kernel 記憶體防護選項、agent 的暫存檔與 marker、env 白名單與黑名單、凍結遊戲的復原。
 - **CI**（`.github/workflows/`）：macOS 上 build host 全套並跑 selftest；arm64 Linux 上 build kernel
   （QEMU 開機測試）、initramfs、agent。`app-build.yml` 跑完整流程：Mesa（aarch64、x86）、rootfs、

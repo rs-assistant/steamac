@@ -308,6 +308,13 @@ private struct StreamingHostForm: View {
         }
     }
 
+    private var hostListening: Bool {
+        switch host.status {
+        case .listening, .streaming: return true
+        case .off, .failed: return false
+        }
+    }
+
     var body: some View {
         Form {
             Section {
@@ -322,7 +329,19 @@ private struct StreamingHostForm: View {
                 }
             }
             Section("Pair a device") {
-                Text("Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS.")
+                Text("Choose Pair a Device…, then open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS.")
+                if host.pairingOpen {
+                    HStack {
+                        Text("Pairing is open until a device pairs, for at most two minutes.")
+                        Spacer()
+                        Button("Stop Pairing") { host.closePairing() }
+                    }
+                } else {
+                    Button("Pair a Device…") { host.openPairing() }
+                        .disabled(!hostListening)
+                }
+                Text("Moonlight can pair only while pairing is open. Only devices on this Mac's local network can connect; connections over VPN or from other networks are refused.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Allow Local Network access when macOS asks. Streaming stops while SteamOS is suspended or asleep and can be started again after it resumes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -774,7 +793,7 @@ private struct ControllerTab: View {
                     Text("Steam Controller").tag(LauncherSettings.PadType.steamController)
                 } label: {
                     Label2(title: "Appears in SteamOS as",
-                           detail: String(localized: "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through). Automatic also passes generic HID joysticks and gamepads unsupported by macOS through as themselves, on a free HID-capable player. They yield to GameController controllers; multi-axis devices are not matched. Turn off Virtual controller to disable this; configure their layout and calibration in SteamOS."),
+                           detail: String(localized: "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)."),
                            now: true, key: .padType)
                 }
                 .disabled(!settings.virtualPad)
@@ -784,6 +803,12 @@ private struct ControllerTab: View {
                            now: true)
                 }
                 .disabled(!settings.virtualPad)
+                Toggle(isOn: $settings.genericHIDPassthrough) {
+                    Label2(title: "Pass other controllers through",
+                           detail: String(localized: "Automatic only. Joysticks and gamepads that macOS does not support go to SteamOS as themselves, on a free player whose SteamOS side supports it; configure their layout and calibration in SteamOS. SteamOS then talks to the device directly, including its configuration commands. Controllers macOS supports are not affected; multi-axis devices and devices that also act as a keyboard or mouse are never passed through."),
+                           now: true, key: .genericHIDPassthrough)
+                }
+                .disabled(!settings.virtualPad || settings.padType != .auto)
                 Picker(selection: $settings.controllerID) {
                     Text("First connected").tag("")
                     ForEach(monitor.controllers, id: \.self) { c in
@@ -1074,12 +1099,17 @@ private struct AdvancedTab: View {
         return (String(localized: "Default: none found"), false)
     }
 
-    /// The shared folder as shown (red when it is not a readable folder, like the disk image).
+    /// The shared folder as shown (red when it is not a readable folder, like the disk image, or
+    /// is never shared: Options.shareRefusal).
     private var shareStatus: (String, Bool) {
         if settings.sharedFolder.isEmpty { return (String(localized: "None"), true) }
-        let ok = Options.isReadableFolder(settings.sharedFolder)
         let path = (settings.sharedFolder as NSString).abbreviatingWithTildeInPath
-        return (ok ? path : String(localized: "\(path) (not found)"), ok)
+        guard Options.isReadableFolder(settings.sharedFolder) else { return (String(localized: "\(path) (not found)"), false) }
+        // Saved before the check existed (or with `control set`): the next start boots without it.
+        if let refusal = Options.shareRefusal(settings.sharedFolder) {
+            return (String(localized: "\(path) (not shared: \(refusal.localizedReason))"), false)
+        }
+        return (path, true)
     }
 
     private var mountTextValid: Bool { Options.isValidShareMount(mountText) }
@@ -1235,7 +1265,7 @@ private struct AdvancedTab: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Label2(title: "Shared folder",
-                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust."),
+                           detail: String(localized: "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. SteamOS can change or delete anything in the folder but nothing outside it (symbolic links are not followed on the Mac). The home folder, ~/Library, system folders and folders containing the home folder cannot be shared."),
                            now: false, key: .sharedFolder)
                     HStack {
                         Text(verbatim: shareStatus.0)
@@ -1245,12 +1275,18 @@ private struct AdvancedTab: View {
                         Button("Choose Folder…") { chooseSharedFolder() }
                         Button("None") { settings.sharedFolder = "" }.disabled(settings.sharedFolder.isEmpty)
                     }
+                    Toggle(isOn: $settings.sharedReadOnly) {
+                        Label2(title: "Read-only",
+                               detail: String(localized: "SteamOS can read the folder but not change it. A read-only folder is not used as a Steam library (that needs write access)."),
+                               now: false, key: .sharedReadOnly)
+                    }
+                    .disabled(settings.sharedFolder.isEmpty)
                     Toggle(isOn: $settings.sharedLibrary) {
                         Label2(title: "Use as a Steam library",
                                detail: String(localized: "Creates SteamLibrary in the shared folder on the next start and adds it to Steam once per path, so you can remove it later in Steam. Proton requires symbolic link support: APFS is recommended; exFAT is unsupported. Shares without symbolic link support are not registered automatically."),
                                now: false, key: .sharedLibrary)
                     }
-                    .disabled(settings.sharedFolder.isEmpty)
+                    .disabled(settings.sharedFolder.isEmpty || settings.sharedReadOnly)
                     HStack {
                         Label2(title: "Mount point in SteamOS",
                                detail: String(localized: "A new subdirectory of /home/steamos/ (letters, digits, / _ . -). Saved when you press Return or leave the field."),
@@ -1446,7 +1482,17 @@ private struct AdvancedTab: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         if !settings.sharedFolder.isEmpty { panel.directoryURL = URL(fileURLWithPath: settings.sharedFolder) }
-        if panel.runModal() == .OK, let url = panel.url { settings.sharedFolder = url.path }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Do not save a folder the next start would refuse (Options.shareRefusal); say why.
+        if let refusal = Options.shareRefusal(url.path) {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "This folder cannot be shared")
+            alert.informativeText = (url.path as NSString).abbreviatingWithTildeInPath + "\n\n"
+                + String(localized: "Not shared: \(refusal.localizedReason). SteamOS can change or delete anything in a shared folder, so choose a folder of its own, for example a new folder for games.")
+            alert.runModal()
+            return
+        }
+        settings.sharedFolder = url.path
     }
 
     private func chooseWmtrLibrary() {

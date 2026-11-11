@@ -1,0 +1,463 @@
+From: steamac <steamac@local>
+Date: Thu, 5 Nov 2026 12:00:00 +0000
+Subject: [PATCH] virtio-fs: macos: keep guest names and symlinks inside the
+ shared directory
+
+The macOS passthrough server reaches an inode through "/.vol/{dev}/{ino}"
+(which the kernel turns into the inode's real path) and appends the
+name the guest sent. Names were not checked, so a guest that drives
+the virtio-fs queue itself could send "..", or "a/b", and look up,
+create, rename, unlink or link files anywhere the host user can, e.g.
+~/Library/LaunchAgents. Path-based calls on an existing inode also
+followed a symlink in the final component: open (and so truncate and
+DAX mappings), chmod (setattr and the set_secctx fallback), the xattr
+calls, statvfs, and link, which on macOS hard-links the symlink's
+target. A symlink in the share (one the guest made, pointing anywhere)
+therefore gave access to its target on the host.
+
+Every name the guest sends (lookup, mkdir, mknod, create, symlink,
+link, both rename names, unlink, rmdir) must now be a single directory
+entry: empty, ".", ".." and names with '/' fail with EINVAL. The guest
+kernel never sends such names. Operations on an existing inode no
+longer follow symlinks: open uses O_NOFOLLOW (was explicitly removed),
+chmod is fchmodat(AT_SYMLINK_NOFOLLOW), path xattr calls pass
+XATTR_NOFOLLOW, link is linkat() without AT_SYMLINK_FOLLOW, and statfs
+of a symlink fails with ELOOP. The guest kernel resolves symlinks
+itself and never opens one through FUSE, so guests see no change.
+
+The worker serves one request at a time, so a guest cannot swap a
+directory for a symlink between building a path and using it.
+---
+ .../src/virtio/fs/macos/passthrough.rs        | 304 +++++++++++++++++-
+ 1 file changed, 289 insertions(+), 15 deletions(-)
+
+diff --git a/src/devices/src/virtio/fs/macos/passthrough.rs b/src/devices/src/virtio/fs/macos/passthrough.rs
+index 16d5bbb..5c6df84 100644
+--- a/src/devices/src/virtio/fs/macos/passthrough.rs
++++ b/src/devices/src/virtio/fs/macos/passthrough.rs
+@@ -165,6 +165,19 @@ fn einval() -> io::Error {
+     linux_error(io::Error::from_raw_os_error(libc::EINVAL))
+ }
+ 
++// A name the guest sends must be exactly one directory entry of its parent. Inodes are reached
++// through "/.vol/{dev}/{ino}", which the host kernel turns into the real path of the inode, and
++// a name is appended to it, so "..", "." or a name with '/' would reach paths outside the shared
++// directory (or name the parent itself). The guest kernel never sends such names; only a guest
++// that drives the virtio queue directly does. A `CStr` cannot contain a NUL byte.
++fn check_name(name: &CStr) -> io::Result<()> {
++    let bytes = name.to_bytes();
++    if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
++        return Err(einval());
++    }
++    Ok(())
++}
++
+ fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
+     match std::str::from_utf8(item) {
+         Ok(val) => match u32::from_str_radix(val, radix) {
+@@ -363,7 +376,15 @@ fn set_host_stat(
+ 
+     if let Some(mode) = mode {
+         let res = match file {
+-            InodeHandle::Path(path) => unsafe { libc::chmod(path.as_ptr(), mode as u16) },
++            // AT_SYMLINK_NOFOLLOW: chmod(2) would change the mode of a symlink's target.
++            InodeHandle::Path(path) => unsafe {
++                libc::fchmodat(
++                    libc::AT_FDCWD,
++                    path.as_ptr(),
++                    mode as u16,
++                    libc::AT_SYMLINK_NOFOLLOW,
++                )
++            },
+             InodeHandle::Fd(fd) => unsafe { libc::fchmod(*fd, mode as u16) },
+         };
+ 
+@@ -722,6 +743,7 @@ impl PassthroughFs {
+             parent,
+             name.to_string_lossy()
+         );
++        check_name(name)?;
+         let data = self
+             .inodes
+             .read()
+@@ -763,10 +785,12 @@ impl PassthroughFs {
+ 
+         let ihandle = self.inode_to_handle(inode, true)?;
+         let fd = match ihandle {
++            // O_NOFOLLOW: if the inode is a symlink, opening its path would open the link's
++            // target, which can be anywhere on the host. The guest resolves symlinks itself.
+             InodeHandle::Path(c_path) => unsafe {
+                 libc::open(
+                     c_path.as_ptr(),
+-                    (flags | libc::O_CLOEXEC) & (!libc::O_NOFOLLOW) & (!libc::O_EXLOCK),
++                    (flags | libc::O_CLOEXEC | libc::O_NOFOLLOW) & (!libc::O_EXLOCK),
+                 )
+             },
+             // Check if we have recently unlinked the inode and kept open a file descriptor to it.
+@@ -983,6 +1007,7 @@ impl PassthroughFs {
+         name: &CStr,
+         flags: libc::c_int,
+     ) -> io::Result<()> {
++        check_name(name)?;
+         let ihandle = self.inode_to_handle(parent, true)?;
+ 
+         let (fd, close_fd) = match ihandle {
+@@ -1218,7 +1243,14 @@ fn set_secctx(file: &InodeHandle, secctx: SecContext, symlink: bool) -> io::Resu
+ 
+     let tmp_mode = st.st_mode | libc::S_IWUSR;
+     let ret = match file {
+-        InodeHandle::Path(path) => unsafe { libc::chmod(path.as_ptr(), tmp_mode) },
++        InodeHandle::Path(path) => unsafe {
++            libc::fchmodat(
++                libc::AT_FDCWD,
++                path.as_ptr(),
++                tmp_mode,
++                libc::AT_SYMLINK_NOFOLLOW,
++            )
++        },
+         InodeHandle::Fd(fd) => unsafe { libc::fchmod(*fd, tmp_mode) },
+     };
+     if ret < 0 {
+@@ -1230,7 +1262,14 @@ fn set_secctx(file: &InodeHandle, secctx: SecContext, symlink: bool) -> io::Resu
+     let secctx_ret = do_set_secctx(file, &secctx, options);
+ 
+     let ret = match file {
+-        InodeHandle::Path(path) => unsafe { libc::chmod(path.as_ptr(), st.st_mode) },
++        InodeHandle::Path(path) => unsafe {
++            libc::fchmodat(
++                libc::AT_FDCWD,
++                path.as_ptr(),
++                st.st_mode,
++                libc::AT_SYMLINK_NOFOLLOW,
++            )
++        },
+         InodeHandle::Fd(fd) => unsafe { libc::fchmod(*fd, st.st_mode) },
+     };
+     if ret < 0 {
+@@ -1250,7 +1289,11 @@ fn set_secctx(file: &InodeHandle, secctx: SecContext, symlink: bool) -> io::Resu
+ fn remove_security_capability(file: &InodeHandle) {
+     let ret = match file {
+         InodeHandle::Path(path) => unsafe {
+-            libc::removexattr(path.as_ptr(), SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
++            libc::removexattr(
++                path.as_ptr(),
++                SECURITY_CAPABILITY.as_ptr() as *const i8,
++                libc::XATTR_NOFOLLOW,
++            )
+         },
+         InodeHandle::Fd(fd) => unsafe {
+             libc::fremovexattr(*fd, SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
+@@ -1398,13 +1441,19 @@ impl FileSystem for PassthroughFs {
+         self.inodes.write().unwrap().clear();
+     }
+ 
+-    fn statfs(&self, _ctx: Context, inode: Inode) -> io::Result<bindings::statvfs64> {
++    fn statfs(&self, ctx: Context, inode: Inode) -> io::Result<bindings::statvfs64> {
+         let mut out = MaybeUninit::<bindings::statvfs64>::zeroed();
+ 
+         let res = match self.inode_to_handle(inode, true)? {
+-            InodeHandle::Path(c_path) => unsafe {
+-                bindings::statvfs64(c_path.as_ptr(), out.as_mut_ptr())
+-            },
++            InodeHandle::Path(c_path) => {
++                // statvfs(2) follows a symlink; report nothing for one rather than the
++                // filesystem of its target.
++                let st = lstat(&ctx, self.cfg.semantics, &c_path, true)?;
++                if st.st_mode & libc::S_IFMT == libc::S_IFLNK {
++                    return Err(linux_error(io::Error::from_raw_os_error(libc::ELOOP)));
++                }
++                unsafe { bindings::statvfs64(c_path.as_ptr(), out.as_mut_ptr()) }
++            }
+             InodeHandle::Fd(fd) => unsafe { bindings::fstatvfs64(fd, out.as_mut_ptr()) },
+         };
+         if res == 0 {
+@@ -2139,7 +2188,17 @@ impl FileSystem for PassthroughFs {
+         let link_c_path = self.name_to_path(newparent, newname)?;
+ 
+         // Safe because this doesn't modify any memory and we check the return value.
+-        let res = unsafe { libc::link(orig_c_path.as_ptr(), link_c_path.as_ptr()) };
++        // linkat without AT_SYMLINK_FOLLOW links the inode itself; link(2) on macOS follows a
++        // symlink and would hard-link its target, which can be outside the shared directory.
++        let res = unsafe {
++            libc::linkat(
++                libc::AT_FDCWD,
++                orig_c_path.as_ptr(),
++                libc::AT_FDCWD,
++                link_c_path.as_ptr(),
++                0,
++            )
++        };
+         if res == 0 {
+             self.lookup(ctx, newparent, newname)
+         } else {
+@@ -2366,6 +2425,8 @@ impl FileSystem for PassthroughFs {
+ 
+         // Safe because this doesn't modify any memory and we check the return value.
+         let res = match self.inode_to_handle(inode, true)? {
++            // XATTR_NOFOLLOW here and in the other xattr calls on a path: never act on the
++            // target of a symlink.
+             InodeHandle::Path(c_path) => unsafe {
+                 libc::setxattr(
+                     c_path.as_ptr(),
+@@ -2373,7 +2434,7 @@ impl FileSystem for PassthroughFs {
+                     value.as_ptr() as *const libc::c_void,
+                     value.len(),
+                     0,
+-                    mflags as libc::c_int,
++                    mflags as libc::c_int | libc::XATTR_NOFOLLOW,
+                 )
+             },
+             InodeHandle::Fd(fd) => unsafe {
+@@ -2428,7 +2489,7 @@ impl FileSystem for PassthroughFs {
+                         std::ptr::null_mut(),
+                         size as libc::size_t,
+                         0,
+-                        0,
++                        libc::XATTR_NOFOLLOW,
+                     )
+                 } else {
+                     libc::getxattr(
+@@ -2437,7 +2498,7 @@ impl FileSystem for PassthroughFs {
+                         buf.as_mut_ptr() as *mut libc::c_void,
+                         size as libc::size_t,
+                         0,
+-                        0,
++                        libc::XATTR_NOFOLLOW,
+                     )
+                 }
+             },
+@@ -2489,7 +2550,7 @@ impl FileSystem for PassthroughFs {
+                     c_path.as_ptr(),
+                     buf.as_mut_ptr() as *mut libc::c_char,
+                     512,
+-                    0,
++                    libc::XATTR_NOFOLLOW,
+                 )
+             },
+             InodeHandle::Fd(fd) => unsafe {
+@@ -2558,7 +2619,7 @@ impl FileSystem for PassthroughFs {
+         // Safe because this doesn't modify any memory and we check the return value.
+         let res = match self.inode_to_handle(inode, true)? {
+             InodeHandle::Path(c_path) => unsafe {
+-                libc::removexattr(c_path.as_ptr(), name.as_ptr(), 0)
++                libc::removexattr(c_path.as_ptr(), name.as_ptr(), libc::XATTR_NOFOLLOW)
+             },
+             InodeHandle::Fd(fd) => unsafe { libc::fremovexattr(fd, name.as_ptr(), 0) },
+         };
+@@ -2835,3 +2896,216 @@ impl FileSystem for PassthroughFs {
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::fs;
++    use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
++    use std::path::PathBuf;
++
++    fn linux_errno(errno: i32) -> Option<i32> {
++        linux_error(io::Error::from_raw_os_error(errno)).raw_os_error()
++    }
++
++    fn ctx() -> Context {
++        Context {
++            uid: 0,
++            gid: 0,
++            pid: 0,
++        }
++    }
++
++    fn c(s: &str) -> CString {
++        CString::new(s).unwrap()
++    }
++
++    // <tmp>/<unique>/{outside/secret, share/{esc -> outside/secret, escdir -> outside}}
++    struct Fixture {
++        base: PathBuf,
++        fs: PassthroughFs,
++    }
++
++    impl Fixture {
++        fn new(tag: &str) -> Self {
++            let base = std::env::temp_dir()
++                .canonicalize()
++                .unwrap()
++                .join(format!("krun-fs-confine-{}-{tag}", std::process::id()));
++            let _ = fs::remove_dir_all(&base);
++            fs::create_dir_all(base.join("outside")).unwrap();
++            fs::create_dir_all(base.join("share")).unwrap();
++            fs::write(base.join("outside/secret"), b"host").unwrap();
++            fs::set_permissions(
++                base.join("outside/secret"),
++                fs::Permissions::from_mode(0o600),
++            )
++            .unwrap();
++            symlink(base.join("outside/secret"), base.join("share/esc")).unwrap();
++            symlink(base.join("outside"), base.join("share/escdir")).unwrap();
++
++            let cfg = Config {
++                root_dir: base.join("share").to_str().unwrap().to_string(),
++                semantics: PermissionSemantics::LinuxSimplified,
++                ..Default::default()
++            };
++            let fs = PassthroughFs::new(cfg, Arc::new(InodeAllocator::new())).unwrap();
++            fs.init(FsOptions::empty()).unwrap();
++            Fixture { base, fs }
++        }
++
++        fn secret(&self) -> fs::Metadata {
++            fs::metadata(self.base.join("outside/secret")).unwrap()
++        }
++    }
++
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            let _ = fs::remove_dir_all(&self.base);
++        }
++    }
++
++    #[test]
++    fn check_name_accepts_one_entry_only() {
++        for ok in ["a", "...", ".a", "a.", "a b", "\u{e9}"] {
++            assert!(check_name(&c(ok)).is_ok(), "{ok:?}");
++        }
++        for bad in ["", ".", "..", "/", "a/b", "../a", "a/..", "/etc"] {
++            let err = check_name(&c(bad)).err().unwrap();
++            assert_eq!(err.raw_os_error(), linux_errno(libc::EINVAL), "{bad:?}");
++        }
++    }
++
++    #[test]
++    fn names_cannot_leave_the_shared_directory() {
++        let f = Fixture::new("names");
++        let root = fuse::ROOT_ID;
++        let einval = linux_errno(libc::EINVAL);
++
++        for name in ["..", ".", "../outside", "escdir/secret", ""] {
++            let err = f.fs.lookup(ctx(), root, &c(name)).err().unwrap();
++            assert_eq!(err.raw_os_error(), einval, "lookup {name:?}");
++        }
++
++        let err =
++            f.fs.mkdir(ctx(), root, &c("../made"), 0o755, 0, Extensions::default())
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(!f.base.join("made").exists());
++
++        let err =
++            f.fs.create(
++                ctx(),
++                root,
++                &c("../outside/new"),
++                0o644,
++                false,
++                0,
++                0,
++                Extensions::default(),
++            )
++            .err()
++            .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(!f.base.join("outside/new").exists());
++
++        let err =
++            f.fs.mknod(
++                ctx(),
++                root,
++                &c("../outside/node"),
++                libc::S_IFIFO as u32 | 0o644,
++                0,
++                0,
++                Extensions::default(),
++            )
++            .err()
++            .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(!f.base.join("outside/node").exists());
++
++        let err =
++            f.fs.symlink(ctx(), &c("x"), root, &c("../link"), Extensions::default())
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(fs::symlink_metadata(f.base.join("link")).is_err());
++
++        let err =
++            f.fs.unlink(ctx(), root, &c("../outside/secret"))
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        let err = f.fs.rmdir(ctx(), root, &c("../outside")).err().unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(f.base.join("outside/secret").exists());
++
++        fs::write(f.base.join("share/inside"), b"guest").unwrap();
++        let err =
++            f.fs.rename(ctx(), root, &c("inside"), root, &c("../moved"), 0)
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        let err =
++            f.fs.rename(ctx(), root, &c("../outside/secret"), root, &c("taken"), 0)
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(f.base.join("share/inside").exists());
++        assert!(f.base.join("outside/secret").exists());
++
++        let inside = f.fs.lookup(ctx(), root, &c("inside")).unwrap();
++        let err =
++            f.fs.link(ctx(), inside.inode, root, &c("../outside/linked"))
++                .err()
++                .unwrap();
++        assert_eq!(err.raw_os_error(), einval);
++        assert!(!f.base.join("outside/linked").exists());
++    }
++
++    #[test]
++    fn symlinks_in_the_share_are_not_followed() {
++        let f = Fixture::new("symlinks");
++        let root = fuse::ROOT_ID;
++        let eloop = linux_errno(libc::ELOOP);
++
++        // lookup reports the link itself.
++        let esc = f.fs.lookup(ctx(), root, &c("esc")).unwrap();
++        assert_eq!(esc.attr.st_mode & libc::S_IFMT, libc::S_IFLNK);
++        let escdir = f.fs.lookup(ctx(), root, &c("escdir")).unwrap();
++        assert_eq!(escdir.attr.st_mode & libc::S_IFMT, libc::S_IFLNK);
++
++        // open/opendir of a link inode does not reach the target.
++        let err = f.fs.open(ctx(), esc.inode, false, 0).err().unwrap();
++        assert_eq!(err.raw_os_error(), eloop);
++        let err = f.fs.opendir(ctx(), escdir.inode, 0).err().unwrap();
++        assert_eq!(err.raw_os_error(), eloop);
++
++        // Truncating through the link inode (no handle) leaves the target alone.
++        let mut attr: bindings::stat64 = unsafe { std::mem::zeroed() };
++        attr.st_size = 0;
++        assert!(f
++            .fs
++            .setattr(ctx(), esc.inode, attr, None, SetattrValid::SIZE)
++            .is_err());
++        assert_eq!(fs::read(f.base.join("outside/secret")).unwrap(), b"host");
++
++        // chmod through the link inode leaves the target's mode alone.
++        attr.st_mode = 0o777;
++        let _ =
++            f.fs.setattr(ctx(), esc.inode, attr, None, SetattrValid::MODE);
++        assert_eq!(f.secret().permissions().mode() & 0o7777, 0o600);
++
++        // A hard link of the link inode links the symlink, not its target.
++        let before = f.secret().nlink();
++        if f.fs.link(ctx(), esc.inode, root, &c("hard")).is_ok() {
++            let md = fs::symlink_metadata(f.base.join("share/hard")).unwrap();
++            assert!(md.file_type().is_symlink());
++        }
++        assert_eq!(f.secret().nlink(), before);
++
++        // statfs does not report the target's filesystem.
++        assert!(f.fs.statfs(ctx(), esc.inode).is_err());
++    }
++}

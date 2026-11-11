@@ -51,6 +51,7 @@ if options.selftestSettings { SettingsSelfTest.run(options, overrides: settingsO
 if options.selftestProvision { ProvisionSelfTest.run(options) }
 if options.selftestRemotePlay { RemotePlaySelfTest.run() }
 if options.selftestStream { StreamSelfTest.run() }
+if options.selftestStreamNet { StreamSelfTest.run(networkOnly: true) }
 if options.selftestPointer { PointerSelfTest.run() }
 if options.selftestGameLayers { GameLayerSelfTest.run() }
 if options.createDisk != nil { CreateDiskCLI.run(options, settings: settings) }

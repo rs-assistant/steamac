@@ -87,6 +87,28 @@
         }
       }
     },
+    "%@ (not shared: %@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ (not shared: %2$@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (не открыта для SteamOS: %2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@（不共享：%2$@）"
+          }
+        }
+      }
+    },
     "%@ / %@ MB · %@ MB/s" : {
       "localizations" : {
         "en" : {
@@ -530,18 +552,18 @@
         }
       }
     },
-    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. Security: virtio-fs does not confine SteamOS to this folder; with a share set, root in SteamOS can potentially read anything your Mac user can. Share only with a SteamOS you trust." : {
+    "A Mac folder SteamOS reads and writes in place (virtio-fs, no copy), mounted at the path below on every boot. Games stored there load at the Mac disk's speed. SteamOS can change or delete anything in the folder but nothing outside it (symbolic links are not followed on the Mac). The home folder, ~/Library, system folders and folders containing the home folder cannot be shared." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. Безопасность: virtio-fs не ограничивает SteamOS этой папкой; с включённой общей папкой root в SteamOS потенциально может прочитать всё, что доступно вашему пользователю Mac. Открывайте папку только той SteamOS, которой доверяете."
+            "value" : "Папка Mac, которую SteamOS читает и пишет на месте (virtio-fs, без копирования); монтируется по указанному ниже пути при каждой загрузке. Игры в ней загружаются со скоростью диска Mac. SteamOS может изменить или удалить что угодно в этой папке, но ничего за её пределами (символические ссылки на Mac не разыменовываются). Домашнюю папку, ~/Library, системные папки и папки, содержащие домашнюю, открыть нельзя."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。安全：virtio-fs 不会把 SteamOS 限制在此文件夹内；设置共享后，SteamOS 中的 root 可能读取你的 Mac 用户能读取的任何内容。仅与你信任的 SteamOS 共享。"
+            "value" : "SteamOS 可直接读写的 Mac 文件夹（virtio-fs，无需复制），每次启动时挂载到下方路径。存放于此的游戏以 Mac 磁盘的速度加载。SteamOS 可以更改或删除此文件夹中的任何内容，但无法访问文件夹之外的内容（Mac 上不会跟随符号链接）。个人文件夹、~/Library、系统文件夹以及包含个人文件夹的文件夹无法共享。"
           }
         }
       }
@@ -1167,22 +1189,6 @@
         }
       }
     },
-    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through). Automatic also passes generic HID joysticks and gamepads unsupported by macOS through as themselves, on a free HID-capable player. They yield to GameController controllers; multi-axis devices are not matched. Turn off Virtual controller to disable this; configure their layout and calibration in SteamOS." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую). Режим «Автоматически» также передаёт обычные HID-джойстики и геймпады, не поддерживаемые macOS, как есть свободному игроку с поддержкой HID. Они уступают место контроллерам GameController; многоосевые устройства не сопоставляются. Чтобы отключить это, выключите «Виртуальный контроллер»; раскладка и калибровка настраиваются в SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。自动模式还会将 macOS 不支持的通用 HID 操纵杆和手柄按其本身直通给支持 HID 的空闲玩家。它们会让位给 GameController 控制器；不匹配多轴设备。关闭“虚拟控制器”可停用此功能；请在 SteamOS 中设置布局和校准。"
-          }
-        }
-      }
-    },
     "Can't reach Valve's servers securely. A VPN, proxy, or network filter may be interfering; try without it or on another network. Technical details are in the launcher log." : {
       "localizations" : {
         "ru" : {
@@ -1457,6 +1463,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择库…"
+          }
+        }
+      }
+    },
+    "Choose Pair a Device…, then open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите «Сопрячь устройство…», затем откройте Moonlight на устройстве и выберите этот Mac. Введите четырёхзначный PIN из Moonlight в окне сопряжения на Mac, затем выберите SteamOS."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择“配对设备…”，然后在设备上打开 Moonlight 并选择此 Mac。在 Mac 的配对窗口中输入 Moonlight 显示的四位 PIN，然后选择 SteamOS。"
           }
         }
       }
@@ -2298,22 +2320,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "完成"
-          }
-        }
-      }
-    },
-    "Download" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузить"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下载"
           }
         }
       }
@@ -4118,6 +4124,22 @@
         }
       }
     },
+    "Moonlight can pair only while pairing is open. Only devices on this Mac's local network can connect; connections over VPN or from other networks are refused." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moonlight может выполнить сопряжение, только пока оно открыто. Подключаться могут только устройства из локальной сети этого Mac; подключения через VPN или из других сетей отклоняются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅在配对开启期间 Moonlight 才能配对。只有此 Mac 所在本地网络中的设备可以连接；通过 VPN 或来自其他网络的连接会被拒绝。"
+          }
+        }
+      }
+    },
     "Moonlight streaming is available while SteamOS is running in a window. It is unavailable in headless mode or without a running VM." : {
       "localizations" : {
         "ru" : {
@@ -4550,6 +4572,22 @@
         }
       }
     },
+    "Not shared: %@. SteamOS can change or delete anything in a shared folder, so choose a folder of its own, for example a new folder for games." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не открыта для SteamOS: %@. SteamOS может изменить или удалить что угодно в общей папке, поэтому выберите отдельную папку, например новую папку для игр."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不共享：%@。SteamOS 可以更改或删除共享文件夹中的任何内容，请选择一个专用文件夹，例如新建一个游戏文件夹。"
+          }
+        }
+      }
+    },
     "Not supported on this Mac's GPU." : {
       "localizations" : {
         "ru" : {
@@ -4695,22 +4733,6 @@
         }
       }
     },
-    "Open Moonlight on your device and select this Mac. Enter the four-digit PIN Moonlight shows in the pairing window on this Mac, then choose SteamOS." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Откройте Moonlight на устройстве и выберите этот Mac. Введите четырёхзначный PIN из Moonlight в окне сопряжения на Mac, затем выберите SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在设备上打开 Moonlight 并选择此 Mac。在 Mac 的配对窗口中输入 Moonlight 显示的四位 PIN，然后选择 SteamOS。"
-          }
-        }
-      }
-    },
     "Open Releases Page" : {
       "localizations" : {
         "ru" : {
@@ -4839,6 +4861,22 @@
         }
       }
     },
+    "Pair a Device…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопрячь устройство…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对设备…"
+          }
+        }
+      }
+    },
     "Pair a device" : {
       "localizations" : {
         "ru" : {
@@ -4883,6 +4921,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已配对客户端"
+          }
+        }
+      }
+    },
+    "Pairing is open until a device pairs, for at most two minutes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сопряжение открыто, пока не будет сопряжено устройство, но не дольше двух минут."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对已开启，直到有设备完成配对，最长两分钟。"
           }
         }
       }
@@ -5220,6 +5274,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原始 GPT 磁盘映像（如 steamos.img）。会保留在原位置。"
+          }
+        }
+      }
+    },
+    "Read-only" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только чтение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只读"
           }
         }
       }
@@ -6938,6 +7008,22 @@
         }
       }
     },
+    "SteamOS can read the folder but not change it. A read-only folder is not used as a Steam library (that needs write access)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS может читать папку, но не изменять её. Папка только для чтения не используется как библиотека Steam (для этого нужен доступ на запись)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 可以读取此文件夹，但不能更改。只读文件夹不会用作 Steam 库（这需要写入权限）。"
+          }
+        }
+      }
+    },
     "SteamOS could not start" : {
       "localizations" : {
         "en" : {
@@ -7362,6 +7448,22 @@
         }
       }
     },
+    "Stop Pairing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановить сопряжение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止配对"
+          }
+        }
+      }
+    },
     "Stop creating the disk?" : {
       "localizations" : {
         "ru" : {
@@ -7675,22 +7777,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Steam Deck 客户端测试版（steamdeck_publicbeta）。通过屏幕上的二维码按常规方式登录。"
-          }
-        }
-      }
-    },
-    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Консоль SteamOS, системный журнал текущей загрузки, дампы памяти, dmesg, журналы клиента Steam и Proton. Перед отправкой SteamOS заменяет идентификаторы Steam, известные ей имена учётных записей и профилей Steam, адреса электронной почты и IP-адреса, если их удаётся распознать; журнал консоли очищается на этом Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志。发送前，SteamOS 会替换可识别的 Steam ID、其已知的 Steam 账户名与个人资料名称、电子邮件地址和 IP 地址；控制台日志在这台 Mac 上清理。"
           }
         }
       }
@@ -8123,6 +8209,22 @@
         }
       }
     },
+    "This folder cannot be shared" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эту папку нельзя открыть для SteamOS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法共享此文件夹"
+          }
+        }
+      }
+    },
     "This libkrun has no sound support (SND=1)." : {
       "localizations" : {
         "ru" : {
@@ -8135,22 +8237,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此 libkrun 不支持声音（SND=1）。"
-          }
-        }
-      }
-    },
-    "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщения приложения, libkrun, virglrenderer и MoltenVK за этот сеанс и строки производительности/простоев (последние ~2 МБ; пути к домашней папке сокращены до ~, имена пользователя и компьютера удалены)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本次会话的启动器、libkrun、virglrenderer 和 MoltenVK 消息及 perf/stall 行（最近约 2 MB；个人文件夹路径缩写为 ~，移除你的用户名和电脑名称）。"
           }
         }
       }
@@ -8911,6 +8997,38 @@
         }
       }
     },
+    "a folder that contains the home folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "папка, в которой находится домашняя папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含个人文件夹的文件夹"
+          }
+        }
+      }
+    },
+    "a system folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "системная папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统文件夹"
+          }
+        }
+      }
+    },
     "another SteamOS disk is being created with the download cache %@: wait for it to finish or cancel it" : {
       "localizations" : {
         "ru" : {
@@ -9227,6 +9345,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "home 分区容量必须为 8 至 4096 GiB"
+          }
+        }
+      }
+    },
+    "inside ~/Library" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "внутри ~/Library"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "位于 ~/Library 内"
           }
         }
       }
@@ -9730,6 +9864,22 @@
         }
       }
     },
+    "the whole home folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вся домашняя папка"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整个个人文件夹"
+          }
+        }
+      }
+    },
     "this image already has room for that home size; start SteamOS to finish growing it" : {
       "localizations" : {
         "ru" : {
@@ -9844,6 +9994,118 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "随附的 libwmtr_host.dylib 在 Mac 上执行 DXMT 的 Metal 调用。"
+          }
+        }
+      }
+    },
+    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。"
+          }
+        }
+      }
+    },
+    "Pass other controllers through" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Передавать другие контроллеры напрямую"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直通其他控制器"
+          }
+        }
+      }
+    },
+    "Automatic only. Joysticks and gamepads that macOS does not support go to SteamOS as themselves, on a free player whose SteamOS side supports it; configure their layout and calibration in SteamOS. SteamOS then talks to the device directly, including its configuration commands. Controllers macOS supports are not affected; multi-axis devices and devices that also act as a keyboard or mouse are never passed through." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только в режиме «Автоматически». Джойстики и геймпады, которые macOS не поддерживает, передаются в SteamOS как есть свободному игроку, если SteamOS это поддерживает; раскладка и калибровка настраиваются в SteamOS. SteamOS при этом работает с устройством напрямую, включая его команды настройки. Контроллеры, поддерживаемые macOS, это не затрагивает; многоосевые устройства и устройства, которые также работают как клавиатура или мышь, никогда не передаются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅限自动模式。macOS 不支持的操纵杆和手柄会按其本身直通到 SteamOS，分配给 SteamOS 端支持此功能的空闲玩家；请在 SteamOS 中设置布局和校准。此时 SteamOS 直接与设备通信，包括其配置命令。macOS 支持的控制器不受影响；多轴设备以及同时作为键盘或鼠标使用的设备永远不会被直通。"
+          }
+        }
+      }
+    },
+    "View Release" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть выпуск"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看发布"
+          }
+        }
+      }
+    },
+    "This is a release of the upstream project (fxgl/steamac). This copy was built from the rs-assistant/steamac source: to update it, pull the source and rebuild. Installing the upstream app replaces this build and its changes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это выпуск исходного проекта (fxgl/steamac). Эта копия собрана из исходного кода rs-assistant/steamac: чтобы обновить её, получите свежий исходный код и пересоберите. Установка приложения исходного проекта заменит эту сборку и её изменения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这是上游项目（fxgl/steamac）的版本。此副本由 rs-assistant/steamac 的源代码构建：要更新，请拉取源代码并重新构建。安装上游应用会替换此构建及其修改。"
+          }
+        }
+      }
+    },
+    "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed), and a list of the controllers and other HID devices connected to this Mac (names, vendor and product IDs, connection)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения лаунчера, libkrun, virglrenderer и MoltenVK за этот сеанс и строки perf/stall (последние ~2 МБ; пути домашней папки сокращены до ~, имена пользователя и компьютера удалены), а также список контроллеров и других HID-устройств, подключённых к этому Mac (названия, идентификаторы производителя и продукта, способ подключения)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次会话的启动器、libkrun、virglrenderer 和 MoltenVK 消息及 perf/stall 行（最近约 2 MB；主文件夹路径缩写为 ~，并移除用户名和电脑名），以及连接到这台 Mac 的控制器和其他 HID 设备列表（名称、厂商与产品 ID、连接方式）。"
+          }
+        }
+      }
+    },
+    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs, the startup logs of the current or last game and up to three recently played games, the SteamOS process list (without arguments) and its network addresses, routes and listening ports. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Консоль SteamOS, системный журнал этой загрузки, дампы ядра, dmesg, журналы клиента Steam и Proton, журналы запуска текущей или последней игры и до трёх недавно запущенных игр, список процессов SteamOS (без аргументов), а также её сетевые адреса, маршруты и прослушиваемые порты. Перед отправкой SteamOS заменяет Steam ID, известные ей имена аккаунта Steam и профиля, адреса электронной почты и IP-адреса, где их удаётся распознать; журнал консоли очищается на этом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志、当前或最近一个游戏以及最多三个最近玩过的游戏的启动日志、SteamOS 进程列表（不含参数）以及其网络地址、路由和监听端口。发送前，SteamOS 会替换可识别的 Steam ID、已知的 Steam 帐户名和个人资料名称、电子邮件地址和 IP 地址；控制台日志在这台 Mac 上清理。"
           }
         }
       }

@@ -9,6 +9,49 @@ protocol StreamHTTPDelegate: AnyObject {
     func streamCancel()
     func streamPairingStarted(_ request: StreamPairingRequest)
     func streamPairingEnded(paired: StreamClient?)
+    func streamPairingWindowChanged(open: Bool)
+}
+
+/// Connection limits of the HTTP(S) listeners. Any host on the LAN reaches them without a
+/// certificate (serverinfo, pairing), so no host may hold more than its share or keep idle
+/// or slow sockets open.
+struct StreamHTTPLimits {
+    /// Open HTTP and HTTPS connections together.
+    var total = 16
+    /// Per source address. A Moonlight client uses one or two at a time (a pairing request held
+    /// for the PIN while it polls serverinfo).
+    var perAddress = 4
+    /// Until a complete request header arrives (TLS handshake included), and between keep-alive
+    /// requests. Partial data does not extend it: a trickled header times out too.
+    var idle: TimeInterval = 10
+    /// Whole connection, whatever it does: long enough for a pairing request held up to 60 s
+    /// for the PIN.
+    var lifetime: TimeInterval = 90
+    static let standard = StreamHTTPLimits()
+
+    /// Why a new connection from `address` is refused, given the source addresses of the open
+    /// ones; nil admits it.
+    func refusal(for address: String, open: [String]) -> String? {
+        if open.count >= total { return "\(total) connections are already open" }
+        if open.filter({ $0 == address }).count >= perAddress { return "\(perAddress) connections from this address are already open" }
+        return nil
+    }
+
+    static func selfCheck() -> [String] {
+        var errors = [String]()
+        let limits = StreamHTTPLimits.standard
+        if limits.total != 16 || limits.perAddress != 4 { errors.append("limits are not 16 total / 4 per address") }
+        if limits.lifetime <= 60 { errors.append("connection lifetime does not cover the 60 s PIN wait") }
+        if limits.refusal(for: "192.168.1.5", open: []) != nil { errors.append("refused the first connection") }
+        let three = Array(repeating: "192.168.1.5", count: 3)
+        if limits.refusal(for: "192.168.1.5", open: three) != nil { errors.append("refused a fourth connection from one address") }
+        if limits.refusal(for: "192.168.1.5", open: three + ["192.168.1.5"]) == nil { errors.append("admitted a fifth connection from one address") }
+        if limits.refusal(for: "192.168.1.6", open: three + ["192.168.1.5"]) != nil { errors.append("one address's connections locked out another") }
+        let fifteen = (0..<15).map { "192.168.1.\(10 + $0 / 3)" }
+        if limits.refusal(for: "192.168.1.99", open: fifteen) != nil { errors.append("refused the sixteenth connection") }
+        if limits.refusal(for: "192.168.1.99", open: fifteen + ["192.168.1.98"]) == nil { errors.append("admitted a seventeenth connection") }
+        return errors
+    }
 }
 
 final class StreamHTTPServer {
@@ -16,23 +59,43 @@ final class StreamHTTPServer {
     private let identity: StreamIdentity
     private let clients: StreamClientStore
     private let hostName: String
+    private let limits: StreamHTTPLimits
     private let queue = DispatchQueue(label: "steamac.stream.http")
     private var listeners = [NWListener]()
     private var connections = [UUID: Connection]()
     private var state = StreamServerState(busy: false, clientFingerprint: nil, appID: 0)
     private var running = false
     private let artwork: Data
+    /// The listeners take every interface; connections from outside the Mac's LAN (VPN tunnels,
+    /// routed or global IPv6 peers) are refused here. The RTSP, control, video and audio streams
+    /// accept only the address of the launching HTTPS connection, so they inherit this check.
+    private let lan = LANFilter()
+    /// Refused connections can come from any host: rate-limited in the log.
+    private static let refusals = LogLimiter("stream: refused connections")
     private lazy var pairing: StreamPairing = {
         let pairing = StreamPairing(identity: identity, clients: clients, queue: queue)
         pairing.started = { [weak self] request in DispatchQueue.main.async { [weak self] in self?.delegate?.streamPairingStarted(request) } }
         pairing.ended = { [weak self] client in DispatchQueue.main.async { [weak self] in self?.delegate?.streamPairingEnded(paired: client) } }
+        pairing.windowChanged = { [weak self] open in DispatchQueue.main.async { [weak self] in self?.delegate?.streamPairingWindowChanged(open: open) } }
         return pairing
     }()
 
-    init(identity: StreamIdentity, clients: StreamClientStore, hostName: String) {
-        self.identity = identity; self.clients = clients; self.hostName = hostName
+    init(identity: StreamIdentity, clients: StreamClientStore, hostName: String, limits: StreamHTTPLimits = .standard) {
+        self.identity = identity; self.clients = clients; self.hostName = hostName; self.limits = limits
         artwork = Self.makeArtwork()
     }
+
+    /// Admit Moonlight pairing requests for StreamPairingWindow.duration or until one device
+    /// pairs (Settings > Streaming > Pair a Device…). Any thread but the server queue.
+    func openPairing() { queue.sync { if running { pairing.openWindow() } } }
+    /// Closes the pairing window and ends a pairing in progress.
+    func closePairing() {
+        queue.sync {
+            pairing.closeWindow(reason: "closed in Settings")
+            pairing.cancel()
+        }
+    }
+    var pairingOpen: Bool { queue.sync { pairing.windowOpen } }
     func start() throws {
         let plainParameters = NWParameters.tcp
         plainParameters.allowLocalEndpointReuse = true
@@ -65,7 +128,16 @@ final class StreamHTTPServer {
             }
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self, self.running else { connection.cancel(); return }
+                let kind = encrypted ? "HTTPS" : "HTTP"
+                guard let source = Self.peerText(connection.endpoint), self.lan.admits(source) else {
+                    Self.refusals.write("stream: refused \(kind) connection from \(Self.peerText(connection.endpoint) ?? "\(connection.endpoint)"): not on this Mac's local network")
+                    connection.cancel(); return
+                }
                 let peer = Connection(connection, secure: encrypted, server: self)
+                if let reason = self.limits.refusal(for: peer.remoteAddress, open: self.connections.values.map(\.remoteAddress)) {
+                    Self.refusals.write("stream: refused \(kind) connection from \(peer.remoteAddress): \(reason)")
+                    connection.cancel(); return
+                }
                 self.connections[peer.id] = peer
                 peer.start()
             }
@@ -80,6 +152,7 @@ final class StreamHTTPServer {
     func stop() {
         queue.sync {
             running = false
+            pairing.closeWindow(reason: "streaming stopped")
             pairing.cancel()
             listeners.forEach { $0.cancel() }; listeners.removeAll()
             for peer in connections.values { peer.connection.cancel() }
@@ -177,6 +250,19 @@ final class StreamHTTPServer {
         return address
     }
 
+    /// A peer's numeric address with the interface it arrived on ("fe80::1%en0") for the LAN
+    /// check; nil for an endpoint that is no IP address.
+    static func peerText(_ endpoint: NWEndpoint) -> String? {
+        guard case .hostPort(let host, _) = endpoint else { return nil }
+        switch host {
+        case .ipv4(let address): return String("\(address)".prefix { $0 != "%" })
+        case .ipv6(let address):
+            let text = String("\(address)".prefix { $0 != "%" })
+            return address.interface.map { "\(text)%\($0.name)" } ?? text
+        default: return nil
+        }
+    }
+
     private final class Connection {
         let id = UUID()
         let connection: NWConnection
@@ -186,9 +272,24 @@ final class StreamHTTPServer {
         var buffer = Data()
         var responding = false
         var closeAfterResponse = false
-        var remoteAddress: String { Self.address(connection.endpoint) }
+        /// Invalidates the idle timeout armed before the last request.
+        var idleGeneration = 0
+        let remoteAddress: String
         var localAddress: String { connection.currentPath?.localEndpoint.map(Self.address) ?? "127.0.0.1" }
-        init(_ connection: NWConnection, secure: Bool, server: StreamHTTPServer) { self.connection = connection; self.secure = secure; self.server = server }
+        init(_ connection: NWConnection, secure: Bool, server: StreamHTTPServer) {
+            self.connection = connection; self.secure = secure; self.server = server
+            remoteAddress = Self.address(connection.endpoint)
+        }
+        /// Cancels the connection unless a complete request arrives within `limits.idle`.
+        func armIdleTimeout() {
+            guard let server else { return }
+            idleGeneration &+= 1
+            let generation = idleGeneration
+            server.queue.asyncAfter(deadline: .now() + server.limits.idle) { [weak self] in
+                guard let self, self.idleGeneration == generation, !self.responding else { return }
+                self.connection.cancel()
+            }
+        }
         static func address(_ endpoint: NWEndpoint) -> String {
             if case .hostPort(let host, _) = endpoint { return StreamHTTPServer.normalizedAddress("\(host)") }
             return "127.0.0.1"
@@ -216,7 +317,8 @@ final class StreamHTTPServer {
                 }
             }
             connection.start(queue: server.queue)
-            server.queue.asyncAfter(deadline: .now() + 90) { [weak self] in self?.connection.cancel() }
+            armIdleTimeout()
+            server.queue.asyncAfter(deadline: .now() + server.limits.lifetime) { [weak self] in self?.connection.cancel() }
         }
         func receive() {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, complete, error in
@@ -257,8 +359,9 @@ final class StreamHTTPServer {
                     let header = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(data.count)\r\nConnection: \(self.closeAfterResponse ? "close" : "keep-alive")\r\n\r\n"
                     self.connection.send(content: Data(header.utf8) + data, completion: .contentProcessed { error in
                         self.responding = false
-                        if error != nil || self.closeAfterResponse { self.connection.cancel() }
-                        else if !self.buffer.isEmpty { self.process(); if !self.responding { self.receive() } }
+                        if error != nil || self.closeAfterResponse { self.connection.cancel(); return }
+                        self.armIdleTimeout()
+                        if !self.buffer.isEmpty { self.process(); if !self.responding { self.receive() } }
                         else { self.receive() }
                     })
                 }

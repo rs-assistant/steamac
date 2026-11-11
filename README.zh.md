@@ -218,8 +218,15 @@ Mac 版 Steam 自身的 UDP 27036 广播不会回灌客户机。
 **设置 → 串流 → 启用 Moonlight 串流**立即开启内置 GameStream 主机；
 默认**关闭**，仅在窗口模式的虚拟机进程中可用。在可信局域网中的另一台设备上安装
 [Moonlight](https://moonlight-stream.org/)，允许 macOS 的**本地网络**权限和入站连接，
-在 Moonlight 中选择此 Mac（也可手动添加 Mac 的局域网地址）。将设备显示的四位 PIN
-输入 Mac 上的配对窗口，然后在 Moonlight 中启动 **SteamOS**。
+在“串流”标签页中选择**配对设备…**，然后在 Moonlight 中选择此 Mac（也可手动添加 Mac 的局域网地址）。
+将设备显示的四位 PIN 输入 Mac 上的配对窗口，然后在 Moonlight 中启动 **SteamOS**。
+
+仅在配对开启期间接受配对：选择**配对设备…**后两分钟内，或直到一台设备完成配对
+（**停止配对**可提前关闭）。窗口之外的请求，或其他设备的 PIN 提示仍在显示时的请求，
+会被直接拒绝且不弹出提示。主机只接受来自本机以及其活动局域网接口（Wi-Fi、以太网；
+IPv6 为链路本地地址或接口的 on-link 前缀）同一子网地址的连接，不接受经 VPN 隧道
+（utun、ipsec、ppp）或其他路由网络的连接；拒绝会限速记录到日志。配对/serverinfo 端口
+最多 16 个连接、每个地址 4 个；10 秒内未发送完整请求（或已打开 90 秒）的连接会被关闭。
 
 “串流”标签页显示主机/会话状态、已配对设备和配对日期。**撤销访问权限**会删除设备权限并结束
 其当前串流，下次连接须重新配对。**结束串流**断开当前会话但保留配对。关闭串流会停止监听
@@ -255,7 +262,7 @@ Moonlight 请求的分辨率暂时接管客户机显示尺寸（偶数且不超�
 | 控制器 | 哪个物理控制器（GameController）驱动虚拟手柄（首个已连接或自选），SteamOS 是否获得手柄及呈现为何种（`--no-gamepad`、`--pad`，见“控制器”），DualSense 是否按本身直通，其余控制器是否成为玩家 2–4，A/B 与 X/Y 互换，摇杆死区，实时输入测试 | — |
 | 声音 | 输出设备（系统默认跟随 macOS，或指定 CoreAudio 设备），音量/静音，低（10 毫秒）/普通（20 毫秒）/稳定（60 毫秒）缓冲——经 `krun_snd_set_*`（`dlsym` 查找；旧 libkrun 下字段置灰并说明） | 声音（`--no-sound`） |
 | 游戏 | **共享游戏统计**（同意前关闭，见“游戏统计”）；已知游戏及已记录会话的游戏：单独配置（图形、Vulkan 驱动、启动选项，见下文）、会话数、游玩时间、上次会话的 FPS / 1% low / 游戏内存 / Vulkan 驱动、可选的个人评价（运行良好 / 可玩但有问题 / 能启动但无法游玩 / 无法启动）与每款游戏的**共享**开关 | 配置可能需要重启 Steam 或虚拟机（见下文） |
-| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + SteamOS 中的挂载点 + 用作 Steam 库（`--share`、`--share-mount`、`--no-share`、`--share-library`、`--no-share-library`，见“共享文件夹”） |
+| 高级 | — | vCPU（`--cpus`）、内存（`--mem`）、SSH 开关 + 端口（`--ssh-port`、`--no-ssh`）与生成密码、网络（`--no-net`）、磁盘映像（`--disk`）、新建磁盘…、Steam 客户端（`--steam-client`，见“Steam 客户端”）、Vulkan 驱动（`--vulkan-driver`，见“Vulkan 驱动”）、允许 DXMT（通过 Mac 的 Metal 运行 D3D11），实验性（`--wmtr-lib`、`--no-wmtr`，见“Vulkan 驱动”）、共享文件夹 + 只读 + SteamOS 中的挂载点 + 用作 Steam 库（`--share`、`--share-mount`、`--no-share`、`--share-ro`、`--share-rw`、`--share-library`、`--no-share-library`，见“共享文件夹”） |
 
 **虚拟机内存与图形共享 Mac 的内存。** 自动分配的虚拟机内存为物理内存的一半（4–16 GiB）。
 每次启动还会为 macOS、其他应用和驱动开销预留至少 3 GiB 或宿主内存的四分之一，
@@ -414,6 +421,10 @@ SteamOS，每次启动时挂载到 **SteamOS 中的挂载点**（默认 `/home/s
 存放在 Mac 上的游戏以 Mac 磁盘的速度加载，SteamOS 写入的内容立即出现在 Mac 上。默认关闭（未选择文件夹）。
 命令行：`--share DIR`、`--share-mount PATH`，`--no-share` 仅本次启动。
 
+**只读**（默认关闭，下次启动生效；`--share-ro` / `--share-rw` 仅本次启动）使用 libkrun 的只读 virtio-fs
+服务器：SteamOS 可以读取文件夹，任何写入都以 `EROFS` 失败。只读共享不会用作 Steam 库（Steam 需要写入），
+因此不传入 `steamac.share_library=1`，启动器会在日志中说明原因。
+
 选择共享文件夹后，**用作 Steam 库**默认开启（下次启动生效）。SteamOS 会在 Steam 启动前创建
 **`<挂载点>/SteamLibrary/steamapps`**，并注册 `<挂载点>/SteamLibrary`，无需在桌面模式使用
 无响应的“添加驱动器”对话框。在 Steam 的存储设置和安装位置选择器中，它是名为 **Mac Share** 的
@@ -447,7 +458,8 @@ Linux 库；请为 SteamOS 使用单独的文件夹。
 uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗口），并在内核命令行传入
 `steamac.share=PATH`。initramfs（“shared folder” 一节）检查路径——`/home/steamos/` 的子目录，
 无空组件、`.` 或 `..`，仅 `[A-Za-z0-9/_.-]`——并写入运行时挂载单元
-（`/run/systemd/system/<path>.mount`，`What=macshare`、`Type=virtiofs`、`TimeoutSec=15`），由
+（`/run/systemd/system/<path>.mount`，`What=macshare`、`Type=virtiofs`、`Options=defaults,nosuid,nodev`、
+`TimeoutSec=15`），由
 `multi-user.target` wanted。它依赖并等待 `steamos-create-homedir.service`，在用户会话之前挂载：
 新磁盘上必须先让 SteamOS 创建并填充用户主目录，再让 systemd 创建挂载点，否则主目录会属于 root，
 且跳过模板复制。`DefaultDependencies=no` 取消在 `local-fs.target` 之前的隐式顺序（主目录创建较晚），
@@ -455,10 +467,18 @@ uid/gid，因此 `steamos` 用户无需所有权映射即可读写；无 DAX 窗
 启动时不存在的文件夹（外置硬盘已拔出、已改名）会记入日志并跳过——启动器不带共享启动；
 只有显式的 `--share` 才会拒绝启动。设置中该行以红色显示为未找到。
 
-**安全。** 按 libkrun 的安全模型，virtio-fs 不会把客户机限制在共享目录内：在 macOS 上 lookup 不过滤 `..`，
-启动器也未沙箱化。设置了共享后，SteamOS 中的 root（在其中取得 root 的任何东西：游戏、Flatpak、Proton
-漏洞）可能读取你的 Mac 用户能读取的任何内容，并写入该用户能写入的位置。仅与你信任的 SteamOS 共享，不需要时
-关闭共享。与 SSH 无关。
+**安全。** SteamOS 可以在共享文件夹内创建、更改和删除任何内容，且仅限于该文件夹。上游 libkrun 的 macOS
+virtio-fs 服务器不限制客户机（接受名称中的 `..` 和 `/`，并跟随符号链接）；libkrun 补丁 0031 拒绝客户机提供的
+任何不是单个目录项的名称，并且在 Mac 上从不跟随符号链接（open 使用 `O_NOFOLLOW`，chmod/xattr 不跟随，
+`linkat` 不带 `AT_SYMLINK_FOLLOW`）。共享中的符号链接（包括 SteamOS 创建的）只在 SteamOS 内解析。Mac 上
+打开这类链接的程序（访达、Mac 游戏）会跟随它，因此不要在 Mac 上运行共享中可能被 SteamOS 修改过的内容。
+在 SteamOS 中共享以 `nosuid,nodev` 挂载。
+
+启动器拒绝共享 `/`、`/System`、`/Library`、`/Users`、`/Applications`、`/private`、`/Volumes`（以及数据宗卷的根目录）、
+你的个人文件夹、任何包含它的文件夹，以及 `~/Library` 及其中的任何内容。检查会解析符号链接，并同时比较设备号与
+inode，因此同一文件夹的其他写法也会被拒绝。设置 → 高级不会保存这样的文件夹并说明原因；之前保存的（或通过
+`control set` 设置的）会记入日志，虚拟机不带共享启动；显式 `--share` 这样的文件夹也一样。请共享一个专用
+文件夹，例如新建的游戏文件夹。
 
 ## 控制器
 
@@ -495,10 +515,13 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
-**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 未发布的 Generic Desktop
+**通用 HID 操纵杆和手柄。** 开启 Settings > Controller 的**直通其他控制器**（默认关闭）后，
+**自动**模式还会将 GameController 未发布的 Generic Desktop
 设备（usage page 1，Joystick 4、Game Pad 5）按其本身直通，
 例如 DJI FPV Remote Controller 2（`2ca3:1020`）和 Spektrum SLT6（`35cf:04fb`）。
-默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。
+默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。同时带有 Pointer（1）、Mouse（2）、
+Keyboard（6）或 Keypad（7）集合的设备永远不会直通（日志记录一次），否则 SteamOS 也会收到它的按键或指针报告。
+客户机直接与直通设备通信，包括会改变其配置的 feature report，因此此功能需要手动开启。
 现有 raw-HID/uhid 路径保留描述符、ID 和报告，由客户机的 `hid-generic`、SDL 和 Steam
 处理布局与校准。这不是 Xbox 模拟：请在 SteamOS/Steam Input 中设置，而不是使用启动器的
 GameController 实时测试、A/B 互换或死区设置。需要支持 `caps hid` 的新版客户机层。
@@ -508,7 +531,7 @@ HID 的可用空位（玩家 2–4 需启用**更多控制器**）。空闲位�
 控制器优先：通用 HID 会让出位置并移到下一个空位，没有空位则等待。蓝牙 LE Steam Controller
 仍保留固定位置，不会被挤走。旧客户机没有 `caps hid` 时，通用 HID 不预留位置，
 也不能唤醒暂停的虚拟机。
-关闭**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
+关闭**直通其他控制器**或**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
 即可停止通用 HID 的发现与直通。`pad state` 会列出名称、VID/PID、registry ID 和玩家位置。
 
 为避免重复输入，只有 `GCController.supportsHIDDevice` 为 true（按 HID registry ID 缓存），
@@ -920,7 +943,7 @@ Sparkle 自己的退出请求（在启动器发起的关机之后到来）被忽
 **GitHub release 检查（其他构建）。** 应用启动时（每次启动一次而非每次虚拟机重启，且至多 6 小时一次——跨启动累计），启动器后台请求最新 release，不阻塞启动，
 地址 `https://api.github.com/repos/fxgl/steamac/releases/latest`（匿名，10 秒超时；排除草稿与预发布），比较其 `vX.Y[.Z]` 标签与自身版本
 （`CFBundleShortVersionString`，数字比较：1.3.10 > 1.3.9）。有新版本时，窗口显示“FX Steam Launcher X.Y 已发布 — 当前版本为 …”，
-附 release 说明与按钮 **下载**（浏览器打开 release 的 `.dmg`，否则打开 release 页）、**跳过此版本**（启动时不再提示该版本）、
+附 release 说明、“这是上游项目的版本”的提示（此 fork 不发布版本，需拉取源代码重新构建来更新），以及按钮 **查看发布**（在浏览器打开 release 页，不打开 `.dmg`：那是上游的构建，会替换此构建及其修改）、**跳过此版本**（启动时不再提示该版本）、
 **稍后提醒**（下次检查再提示）。菜单项立即检查——无 6 小时限制且含已跳过版本——
 报告“已是最新版本”或错误；启动时网络与 HTTP 错误只记日志
 （`update: …`）。开发版启动器 `work/out/steamac-vm` 启动时不检查（菜单可用）；源码构建（`bundle.sh`）会检查。

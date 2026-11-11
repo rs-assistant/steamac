@@ -263,9 +263,19 @@ and [discovery envelope framing](https://github.com/OpenSourceLAN/steam-discover
 **Settings → Streaming → Enable Moonlight streaming** turns on the built-in GameStream host
 immediately; it is **off by default** and available only in the windowed VM process. Install
 [Moonlight](https://moonlight-stream.org/) on another device on your trusted local network,
-allow macOS **Local Network** access and incoming connections, and select this Mac in Moonlight
-(or add the Mac's LAN address manually). Enter the four-digit PIN shown on that device in the
-pairing window on the Mac, then launch **SteamOS** in Moonlight.
+allow macOS **Local Network** access and incoming connections, choose **Pair a Device…** in the
+Streaming tab, and select this Mac in Moonlight (or add the Mac's LAN address manually). Enter
+the four-digit PIN shown on that device in the pairing window on the Mac, then launch
+**SteamOS** in Moonlight.
+
+Pairing is accepted only while it is open: for two minutes after **Pair a Device…** or until one
+device pairs (**Stop Pairing** closes it early). Requests outside that window, or while another
+device's PIN prompt is up, are refused without a prompt. The host accepts connections only from
+the Mac itself and from addresses on the subnet of one of its active LAN interfaces (Wi-Fi,
+Ethernet; IPv6 link-local or the interface's on-link prefix), not from VPN tunnels (utun, ipsec,
+ppp) or other routed networks; refusals are logged, rate-limited. The pairing/serverinfo ports
+take at most 16 connections, 4 per address; one without a complete request for 10 s (or open
+90 s) is closed.
 
 The Streaming tab shows host/session status and paired devices with their pairing dates.
 **Revoke** removes a device's access and ends its current stream; it must pair again.
@@ -290,7 +300,9 @@ Moonlight controllers take the first SteamOS player slots ahead of Mac controlle
 session; with **Additional controllers** off, a Mac controller waits until the stream ends.
 The Mac controllers return to their usual slots afterwards.
 No HDR, native pen/touch, or video encryption is advertised; use a trusted LAN.
-`--selftest-stream` runs the component protocol/media checks without booting a VM.
+`--selftest-stream` runs the component protocol/media checks (including the LAN filter, the
+pairing window and the connection limits) without booting a VM; `--selftest-stream-net` runs only
+the network ones (no screen capture or hardware encoding; CI runs it).
 
 ## Settings window
 
@@ -310,7 +322,7 @@ over saved values, but only for that launch: the field displays “overridden by
 | Controller | which physical controller (GameController) drives the virtual pad (first connected or selected), whether SteamOS gets a pad and what it appears as (`--no-gamepad`, `--pad`, see “Controller”), whether a DualSense is passed through as itself, whether further controllers are players 2–4, swap A/B and X/Y, stick dead zone, live input test | — |
 | Sound | output device (System default follows macOS, or a specific CoreAudio device), volume/mute, Low/Normal/Safe buffer — via `krun_snd_set_*` (looked up with `dlsym`; with an older libkrun the fields are disabled with an explanation) | sound (`--no-sound`) |
 | Games | **Share game statistics** (off until you agree, see “Game statistics”); known games and games with recorded sessions: per-game profiles (graphics, Vulkan driver, launch options; see below), sessions, play time, last session's FPS / 1% low / game memory / Vulkan driver, your optional rating (Runs well / Playable with issues / Starts, but unplayable / Does not start) and a per-game **Share** switch | profiles may require restarting Steam or the VM (see below) |
-| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-library`, `--no-share-library`, see “Shared folder”) |
+| Advanced | — | vCPU (`--cpus`), RAM (`--mem`), SSH enable/disable + port (`--ssh-port`, `--no-ssh`) and generated password, network (`--no-net`), disk image (`--disk`), Create New Disk…, Steam client (`--steam-client`, see “Steam client”), Vulkan driver (`--vulkan-driver`, see “Vulkan driver”), Allow DXMT (D3D11 on the Mac's Metal), experimental (`--wmtr-lib`, `--no-wmtr`, see “Vulkan driver”), shared folder + read-only + mount point in SteamOS + use as a Steam library (`--share`, `--share-mount`, `--no-share`, `--share-ro`, `--share-rw`, `--share-library`, `--no-share-library`, see “Shared folder”) |
 
 **VM RAM and graphics share the Mac's memory.** Automatic VM RAM is half of physical RAM
 (4–16 GiB). On every boot the launcher also reserves at least 3 GiB, or a quarter of host RAM,
@@ -545,6 +557,11 @@ games stored on the Mac load at the Mac disk's speed, and what SteamOS writes th
 at once. Off by default (no folder chosen). Command line: `--share DIR`, `--share-mount PATH`,
 `--no-share` for one launch.
 
+**Read-only** (off by default, next start; `--share-ro` / `--share-rw` for one launch) uses
+libkrun's read-only virtio-fs server: SteamOS can read the folder, every write fails with
+`EROFS`. A read-only share is not used as a Steam library (Steam needs to write there), so
+`steamac.share_library=1` is not passed and the launcher logs why.
+
 **Use as a Steam library** is on by default when a folder is shared (next start).
 SteamOS creates **`<mount>/SteamLibrary/steamapps`** and registers `<mount>/SteamLibrary`
 before Steam starts; no Desktop Mode “Add Drive” dialog is needed. In Steam's Storage settings
@@ -586,7 +603,8 @@ guest sees its own uid/gid on every file, so the `steamos` user reads and writes
 mapping; no DAX window) and passes `steamac.share=PATH` on the kernel command line. The initramfs
 ("shared folder" section) checks the path — a subdirectory of `/home/steamos/`, no empty, `.` or `..`
 components, `[A-Za-z0-9/_.-]` only — and writes a runtime mount unit
-(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `TimeoutSec=15`) wanted by
+(`/run/systemd/system/<path>.mount`, `What=macshare`, `Type=virtiofs`, `Options=defaults,nosuid,nodev`,
+`TimeoutSec=15`) wanted by
 `multi-user.target`. It requires and runs after `steamos-create-homedir.service`, before user
 sessions: on a fresh disk SteamOS must create and populate the user's home before systemd creates
 the mount point, otherwise the home would be root-owned and its skeleton skipped. The unit has
@@ -596,11 +614,22 @@ lives for that boot only, like the runtime unit masks. A folder that is not ther
 (external drive unplugged, renamed) is logged and skipped — the launcher starts without the share;
 only an explicit `--share` refuses to start. The Settings row shows it in red as not found.
 
-**Security.** Per libkrun's security model, virtio-fs does not confine the guest to the shared
-directory: on macOS the lookup does not filter `..`, and the launcher is not sandboxed. With a
-share set, root in SteamOS (anything that gains root there: a game, a Flatpak, a Proton exploit)
-can potentially read anything your Mac user can read, and write where that user can write. Share
-only with a SteamOS you trust, and keep the share off when you do not need it. SSH is not involved.
+**Security.** SteamOS can create, change and delete anything inside the shared folder, and
+only there. Upstream libkrun's macOS virtio-fs server did not confine the guest (it accepted `..`
+and `/` in names and followed symbolic links); libkrun patch 0031 rejects every guest-supplied name
+that is not a single directory entry and never follows a symlink on the Mac (open `O_NOFOLLOW`,
+chmod/xattr without following, `linkat` without `AT_SYMLINK_FOLLOW`). A symlink in the share,
+including one SteamOS made, is only resolved inside SteamOS. Programs on the Mac that open such a
+symlink (Finder, a Mac game) do follow it, so do not run things from the share on the Mac that
+SteamOS could have changed. The share is mounted `nosuid,nodev` in SteamOS.
+
+The launcher refuses to share `/`, `/System`, `/Library`, `/Users`, `/Applications`, `/private`,
+`/Volumes` (and the data volume's root), your home folder, any folder that contains it, and
+`~/Library` or anything inside it. The check resolves symbolic links and also compares by
+device and inode, so another spelling of the same folder is refused too. Settings → Advanced does
+not save such a folder and says why; one saved earlier (or set with `control set`) is logged and
+the VM starts without the share, as it does for an explicit `--share` of one. Share a folder of
+its own, for example a new folder for games.
 
 ## Controller
 
@@ -661,22 +690,28 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
-**Generic HID joysticks and gamepads.** **Automatic** also passes Generic Desktop (usage page 1)
-Joystick (4) and Game Pad (5) devices not published by GameController
+**Generic HID joysticks and gamepads.** With Settings > Controller **Pass other controllers through**
+on (off by default; Debug Control key `genericHIDPassthrough`), **Automatic** also passes Generic
+Desktop (usage page 1) Joystick (4) and Game Pad (5) devices not published by GameController
 through as themselves: for example DJI FPV Remote Controller 2 (`2ca3:1020`) and Spektrum SLT6
 (`35cf:04fb`). The existing raw-HID/uhid path preserves the descriptor, IDs and reports; the
 guest's `hid-generic`, SDL and Steam handle layout and calibration. This is not Xbox emulation:
 configure the device in SteamOS/Steam Input, not the launcher's live GameController input test,
 A/B swap or deadzone. A current guest layer with `caps hid` is required.
-Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default.
+Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default. A device
+that also has a Pointer (1), Mouse (2), Keyboard (6) or Keypad (7) collection is never passed
+through (logged once): SteamOS would get its keystrokes or pointer reports too. The guest talks to
+a passed-through device directly, including feature reports that change its configuration, which
+is why this is opt-in.
 
 Each device takes the lowest free usable player whose guest service supports HID, sharing the
 four players with GameController and Steam Controllers (enable **Additional controllers** for
 players 2–4). It keeps its player while free, but yields to a GameController controller and moves
 to the next free player, or waits if none is available. BLE Steam Controller reservations remain
 sticky and are not displaced. Generic devices cannot reserve a player on an older guest without
-`caps hid`, and cannot wake a paused VM. Turn off **Virtual controller** (`--no-gamepad`) or
-choose an explicit **Appears in SteamOS as** kind to stop generic discovery and passthrough.
+`caps hid`, and cannot wake a paused VM. Turn off **Pass other controllers through** or
+**Virtual controller** (`--no-gamepad`), or choose an explicit **Appears in SteamOS as** kind, to
+stop generic discovery and passthrough.
 `pad state` lists each generic controller's name, VID/PID, registry ID and reserved player.
 
 To avoid duplicate input, a generic HID is GameController-owned only when
@@ -1391,8 +1426,9 @@ the background without delaying startup from `https://api.github.com/repos/fxgl/
 (unauthenticated, 10 s timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with
 its own version (`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is
 available, the window shows “FX Steam Launcher X.Y is available — you have …”, with the release
-description and buttons **Download** (opens the release's `.dmg` in a browser, or the release page
-otherwise), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
+description, a note that it is the upstream project's release (this fork publishes none and is
+updated by pulling and rebuilding) and buttons **View Release** (opens the release page in a browser,
+never the `.dmg`: that is upstream's build, which would replace this one and its changes), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
 (offers it again at the next check). The menu item checks immediately — without the 6-hour limit and
 including skipped versions — and reports “You're up to date” or an error; network and HTTP errors at
 startup are only logged (`update: …`). The dev launcher `work/out/steamac-vm` does not check at startup

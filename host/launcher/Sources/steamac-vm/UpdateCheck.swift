@@ -8,8 +8,11 @@ import SwiftUI
 /// app. Every other build (source builds, the dev launcher, copies Sparkle cannot replace) uses
 /// the flow below.
 ///
-/// The latest GitHub release of fxgl/steamac against this launcher's
-/// CFBundleShortVersionString. Runs in the VM process of the first boot (once per app launch, not
+/// The latest GitHub release of fxgl/steamac (upstream) against this launcher's
+/// CFBundleShortVersionString. This fork (rs-assistant/steamac) publishes no releases and is built
+/// from source, so a newer upstream release only says there is upstream work to pull: the panel
+/// opens the release page, never the DMG (upstream's build, without this fork's changes and with
+/// its own defaults), and says so. Runs in the VM process of the first boot (once per app launch, not
 /// per VM reboot) a few seconds after the window is up, at most every 6 h (also across launches),
 /// never in development builds (work/out/steamac-vm), and only while Settings > General "Check for
 /// updates at startup" is on. The request goes to api.github.com with only the User-Agent
@@ -54,8 +57,9 @@ final class UpdateChecker {
         var inApp = false
 
         var versionString: String { version.isEmpty ? tag : UpdateChecker.format(version) }
-        /// Download: the .dmg, else the release page, else the releases list.
-        var downloadURL: URL { dmg ?? page ?? UpdateChecker.releasesPage }
+        /// Upstream's release page, else its releases list. Not the .dmg: that is upstream's build,
+        /// which would replace this source build and its changes.
+        var downloadURL: URL { page ?? UpdateChecker.releasesPage }
     }
 
     enum Outcome {
@@ -156,6 +160,9 @@ final class UpdateChecker {
         let newest = try? newest(inJSON: Data(json.utf8))
         if newest?.tag != "v1.3.10" || newest?.dmg?.absoluteString != "https://e/x.dmg" {
             failures.append("update: newest release \(newest?.tag ?? "none"), dmg \(newest?.dmg?.absoluteString ?? "none")")
+        }
+        if newest?.downloadURL.absoluteString != "https://github.com/fxgl/steamac/releases/tag/v1.3.10" {
+            failures.append("update: opens \(newest?.downloadURL.absoluteString ?? "none"), not the release page")
         }
         let md = "## What's new\r\n* **Faster** boot\n- see [notes](https://e)\n\n\n\nend<!-- hidden -->\n---\n```\ncode\n```\n"
         let notes = String(releaseNotesText(md).characters)
@@ -362,7 +369,7 @@ final class UpdateChecker {
                     sparkle.install(r)
                     return
                 }
-                log("update: download \(r.tag): opening \(r.downloadURL.absoluteString)")
+                log("update: upstream release \(r.tag): opening \(r.downloadURL.absoluteString)")
                 NSWorkspace.shared.open(r.downloadURL)
                 self.panel?.window.close()
             },
@@ -655,6 +662,12 @@ struct UpdateView: View {
                     if let subtitle = subtitle(r) {
                         Text(verbatim: subtitle).font(.caption).foregroundStyle(.secondary)
                     }
+                    if !r.inApp {
+                        Text("This is a release of the upstream project (fxgl/steamac). This copy was built from the rs-assistant/steamac source: to update it, pull the source and rebuild. Installing the upstream app replaces this build and its changes.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Text("Release notes").font(.subheadline.weight(.semibold))
                     ScrollView {
                         Text(releaseNotesText(r.notes))
@@ -673,7 +686,7 @@ struct UpdateView: View {
                         if r.inApp {
                             Button("Install Update") { actions.download(r) }.keyboardShortcut(.defaultAction)
                         } else {
-                            Button("Download") { actions.download(r) }.keyboardShortcut(.defaultAction)
+                            Button("View Release") { actions.download(r) }.keyboardShortcut(.defaultAction)
                         }
                     }
                 case .upToDate(let current, let note):

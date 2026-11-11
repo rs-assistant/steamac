@@ -48,6 +48,11 @@
 # 0029 converts CoreAudio capture in passes of at most 64 KiB, not one guest-sized allocation.
 # 0030 updates virtio-gpu scanout bits only after SET_SCANOUT validated and configured the new
 # resource, and clears (not toggles) the previous resource's bit.
+# Patch 0031 (this fork) confines the macOS virtio-fs server (the optional shared folder) to its
+# directory: guest names must be one directory entry (empty, ".", ".." and "/" fail with EINVAL),
+# and calls on an existing inode never follow a symlink (open O_NOFOLLOW, fchmodat/xattr NOFOLLOW,
+# linkat without AT_SYMLINK_FOLLOW, statfs of a symlink fails). Before, a guest that drives the
+# queue itself could reach any file of the Mac user (e.g. ~/Library/LaunchAgents).
 #
 # Output (work/out/host):
 #   lib/libkrun.1.dylib      install_name @rpath/libkrun.1.dylib, ad-hoc signed
@@ -133,6 +138,9 @@ done
 	cd src/devices
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features gpu --lib -- virtio::gpu
+	# The shared folder stays inside its directory (patch 0031; same test binary as above).
+	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
+		cargo test -q --features gpu --lib -- virtio::fs::macos
 	# Speaker detection/config consistency, PCM permutations, height routing and downmix.
 	RUSTFLAGS="-L native=$out/lib -C link-args=-Wl,-rpath,$out/lib" \
 		cargo test -q --features snd --test macos_audio
