@@ -120,6 +120,11 @@ enum ProvisionSelfTest {
         check(boot.state == failedState && bootFailures == 1, "duplicate init FATAL and later boot lines cannot hide the failure or show a second sheet")
         check(ProgressPillView.Content(boot.state).percentText.isEmpty,
               "boot failure is not shown as an endless 3% in compact progress")
+        let longBoot = BootProgress()
+        longBoot.consoleLine("steamac-init: FATAL: " + String(repeating: "x\u{1b}[2J", count: 50_000))
+        check(longBoot.state.stageId == "boot-failed" && longBoot.state.detail.count < BootProgress.fatalReasonLimit + 40
+              && !longBoot.state.detail.unicodeScalars.contains("\u{1b}"),
+              "a long FATAL line from the guest is cut and has no control characters in the failure sheet")
         for code in [EACCES, EPERM] {
             for locking in [false, true] {
                 let error = DiskLock.failure(path: "/Volumes/Download/steamosFX.img", code: code, locking: locking)

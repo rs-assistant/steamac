@@ -5,6 +5,10 @@
 [Unit]
 Description=FX Steam Launcher reclaim sparse disk space
 ConditionPathExists=/home/steamos/.local/share/steamac/compact-request
+# No start limit: a run of failing requests (a session process can drop anything at the request
+# path) must not put this unit, and with it fx-compact-disk.path, into a failed state that stops
+# Reclaim Disk Space until the next boot. Every run removes the request, so this cannot spin.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

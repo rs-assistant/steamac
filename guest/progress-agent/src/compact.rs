@@ -88,6 +88,7 @@ fn run(id: &str) -> io::Result<String> {
     let req = dir.join("compact-request");
     let res = dir.join("compact-result");
     let _ = fs::remove_file(&res);
+    clear_non_file(&req)?;
     {
         let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&req)?;
         f.write_all(id.as_bytes())?;
@@ -108,6 +109,20 @@ fn run(id: &str) -> io::Result<String> {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "timed out waiting for fstrim"));
         }
         std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Anything but a regular file at the request path (a directory, symlink or FIFO another session
+/// process left there) is removed first: the root helper refuses such a request, and before it
+/// also removed it a leftover directory kept fx-compact-disk.path re-triggering a failing
+/// service until systemd's start limit stopped Reclaim Disk Space until the next boot.
+fn clear_non_file(path: &std::path::Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(path),
+        Ok(m) if !m.is_file() => fs::remove_file(path),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
 }
 
@@ -141,6 +156,30 @@ mod tests {
     #[test]
     fn parse_failed() {
         assert!(parse_result("abc", "failed abc permission denied").unwrap().is_err());
+    }
+
+    #[test]
+    fn non_file_request_paths_are_cleared() {
+        let base = std::env::temp_dir().join(format!("fx-compact-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let dir = base.join("req-dir");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        clear_non_file(&dir).unwrap();
+        assert!(fs::symlink_metadata(&dir).is_err());
+        let link = base.join("req-link");
+        let target = base.join("target");
+        fs::write(&target, b"keep").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        clear_non_file(&link).unwrap();
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"keep");
+        let file = base.join("req-file");
+        fs::write(&file, b"id\n").unwrap();
+        clear_non_file(&file).unwrap();
+        assert!(file.is_file());
+        clear_non_file(&base.join("missing")).unwrap();
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

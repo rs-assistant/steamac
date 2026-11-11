@@ -13,7 +13,9 @@ RES=$DIR/compact-result
 ID=$(runuser -u steamos -- bash -c '
 	req=$1
 	if [[ ! -f $req || -L $req ]]; then
-		rm -f -- "$req"
+		# A directory too: one left behind would keep fx-compact-disk.path re-triggering
+		# this unit (see StartLimitIntervalSec in the service).
+		rm -rf --one-file-system -- "$req"
 		exit 1
 	fi
 	# O_NONBLOCK also handles a regular file replaced with a FIFO after the check.

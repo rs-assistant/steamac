@@ -178,10 +178,10 @@ struct ReportView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 check($model.choices.launcherLogs, "Include launcher logs",
-                      String(localized: "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)."))
+                      String(localized: "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed), and a list of the controllers and other HID devices connected to this Mac (names, vendor and product IDs, connection)."))
                 check($model.choices.guestLogs, "Include SteamOS logs (system journal, Steam/Proton logs)",
                       model.context.guest != nil
-                        ? String(localized: "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac.")
+                        ? String(localized: "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs, the startup logs of the current or last game and up to three recently played games, the SteamOS process list (without arguments) and its network addresses, routes and listening ports. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac.")
                         : String(localized: "SteamOS is not running: only its console log of this session is included."))
                 check($model.choices.screenshot, "Include a screenshot of the VM window",
                       model.hasWindow ? String(localized: "Off by default: the picture may show your Steam account name, friends or other personal information.")

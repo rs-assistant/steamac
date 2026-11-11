@@ -7647,22 +7647,6 @@
         }
       }
     },
-    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Консоль SteamOS, системный журнал текущей загрузки, дампы памяти, dmesg, журналы клиента Steam и Proton. Перед отправкой SteamOS заменяет идентификаторы Steam, известные ей имена учётных записей и профилей Steam, адреса электронной почты и IP-адреса, если их удаётся распознать; журнал консоли очищается на этом Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志。发送前，SteamOS 会替换可识别的 Steam ID、其已知的 Steam 账户名与个人资料名称、电子邮件地址和 IP 地址；控制台日志在这台 Mac 上清理。"
-          }
-        }
-      }
-    },
     "The bundled libwmtr_host.dylib runs DXMT's Metal calls on the Mac. Choose another executor library only if you trust it." : {
       "localizations" : {
         "ru" : {
@@ -8103,22 +8087,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此 libkrun 不支持声音（SND=1）。"
-          }
-        }
-      }
-    },
-    "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed)." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщения приложения, libkrun, virglrenderer и MoltenVK за этот сеанс и строки производительности/простоев (последние ~2 МБ; пути к домашней папке сокращены до ~, имена пользователя и компьютера удалены)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本次会话的启动器、libkrun、virglrenderer 和 MoltenVK 消息及 perf/stall 行（最近约 2 MB；个人文件夹路径缩写为 ~，移除你的用户名和电脑名称）。"
           }
         }
       }
@@ -9892,6 +9860,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这是上游项目（fxgl/steamac）的版本。此副本由 rs-assistant/steamac 的源代码构建：要更新，请拉取源代码并重新构建。安装上游应用会替换此构建及其修改。"
+          }
+        }
+      }
+    },
+    "This session's launcher, libkrun, virglrenderer and MoltenVK messages and perf/stall lines (last ~2 MB; home folder paths shortened to ~, your user and computer names removed), and a list of the controllers and other HID devices connected to this Mac (names, vendor and product IDs, connection)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщения лаунчера, libkrun, virglrenderer и MoltenVK за этот сеанс и строки perf/stall (последние ~2 МБ; пути домашней папки сокращены до ~, имена пользователя и компьютера удалены), а также список контроллеров и других HID-устройств, подключённых к этому Mac (названия, идентификаторы производителя и продукта, способ подключения)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次会话的启动器、libkrun、virglrenderer 和 MoltenVK 消息及 perf/stall 行（最近约 2 MB；主文件夹路径缩写为 ~，并移除用户名和电脑名），以及连接到这台 Mac 的控制器和其他 HID 设备列表（名称、厂商与产品 ID、连接方式）。"
+          }
+        }
+      }
+    },
+    "The SteamOS console, this boot's system journal, coredumps, dmesg, Steam client logs and Proton logs, the startup logs of the current or last game and up to three recently played games, the SteamOS process list (without arguments) and its network addresses, routes and listening ports. Before sending them, SteamOS replaces Steam IDs, the Steam account and persona names it knows, email addresses and IP addresses where recognisable; the console log is scrubbed on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Консоль SteamOS, системный журнал этой загрузки, дампы ядра, dmesg, журналы клиента Steam и Proton, журналы запуска текущей или последней игры и до трёх недавно запущенных игр, список процессов SteamOS (без аргументов), а также её сетевые адреса, маршруты и прослушиваемые порты. Перед отправкой SteamOS заменяет Steam ID, известные ей имена аккаунта Steam и профиля, адреса электронной почты и IP-адреса, где их удаётся распознать; журнал консоли очищается на этом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SteamOS 控制台、本次启动的系统日志、核心转储、dmesg、Steam 客户端日志和 Proton 日志、当前或最近一个游戏以及最多三个最近玩过的游戏的启动日志、SteamOS 进程列表（不含参数）以及其网络地址、路由和监听端口。发送前，SteamOS 会替换可识别的 Steam ID、已知的 Steam 帐户名和个人资料名称、电子邮件地址和 IP 地址；控制台日志在这台 Mac 上清理。"
           }
         }
       }
