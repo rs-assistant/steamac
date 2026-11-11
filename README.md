@@ -661,22 +661,28 @@ state. Swap A/B and the stick dead zone do not apply to a passed-through control
 does not say which HID device a controller is: with several DualSenses connected, the first one
 found is passed through. Older guest layers without `caps hid` keep getting the uinput pad.
 
-**Generic HID joysticks and gamepads.** **Automatic** also passes Generic Desktop (usage page 1)
-Joystick (4) and Game Pad (5) devices not published by GameController
+**Generic HID joysticks and gamepads.** With Settings > Controller **Pass other controllers through**
+on (off by default; Debug Control key `genericHIDPassthrough`), **Automatic** also passes Generic
+Desktop (usage page 1) Joystick (4) and Game Pad (5) devices not published by GameController
 through as themselves: for example DJI FPV Remote Controller 2 (`2ca3:1020`) and Spektrum SLT6
 (`35cf:04fb`). The existing raw-HID/uhid path preserves the descriptor, IDs and reports; the
 guest's `hid-generic`, SDL and Steam handle layout and calibration. This is not Xbox emulation:
 configure the device in SteamOS/Steam Input, not the launcher's live GameController input test,
 A/B swap or deadzone. A current guest layer with `caps hid` is required.
-Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default.
+Multi-axis Controller (8), such as SpaceMouse, is deliberately not matched by default. A device
+that also has a Pointer (1), Mouse (2), Keyboard (6) or Keypad (7) collection is never passed
+through (logged once): SteamOS would get its keystrokes or pointer reports too. The guest talks to
+a passed-through device directly, including feature reports that change its configuration, which
+is why this is opt-in.
 
 Each device takes the lowest free usable player whose guest service supports HID, sharing the
 four players with GameController and Steam Controllers (enable **Additional controllers** for
 players 2–4). It keeps its player while free, but yields to a GameController controller and moves
 to the next free player, or waits if none is available. BLE Steam Controller reservations remain
 sticky and are not displaced. Generic devices cannot reserve a player on an older guest without
-`caps hid`, and cannot wake a paused VM. Turn off **Virtual controller** (`--no-gamepad`) or
-choose an explicit **Appears in SteamOS as** kind to stop generic discovery and passthrough.
+`caps hid`, and cannot wake a paused VM. Turn off **Pass other controllers through** or
+**Virtual controller** (`--no-gamepad`), or choose an explicit **Appears in SteamOS as** kind, to
+stop generic discovery and passthrough.
 `pad state` lists each generic controller's name, VID/PID, registry ID and reserved player.
 
 To avoid duplicate input, a generic HID is GameController-owned only when

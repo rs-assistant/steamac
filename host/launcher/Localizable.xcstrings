@@ -1167,22 +1167,6 @@
         }
       }
     },
-    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through). Automatic also passes generic HID joysticks and gamepads unsupported by macOS through as themselves, on a free HID-capable player. They yield to GameController controllers; multi-axis devices are not matched. Turn off Virtual controller to disable this; configure their layout and calibration in SteamOS." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую). Режим «Автоматически» также передаёт обычные HID-джойстики и геймпады, не поддерживаемые macOS, как есть свободному игроку с поддержкой HID. Они уступают место контроллерам GameController; многоосевые устройства не сопоставляются. Чтобы отключить это, выключите «Виртуальный контроллер»; раскладка и калибровка настраиваются в SteamOS."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。自动模式还会将 macOS 不支持的通用 HID 操纵杆和手柄按其本身直通给支持 HID 的空闲玩家。它们会让位给 GameController 控制器；不匹配多轴设备。关闭“虚拟控制器”可停用此功能；请在 SteamOS 中设置布局和校准。"
-          }
-        }
-      }
-    },
     "Can't reach Valve's servers securely. A VPN, proxy, or network filter may be interfering; try without it or on another network. Technical details are in the launcher log." : {
       "localizations" : {
         "ru" : {
@@ -9844,6 +9828,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "随附的 libwmtr_host.dylib 在 Mac 上执行 DXMT 的 Metal 调用。"
+          }
+        }
+      }
+    },
+    "Button glyphs and layout in Steam. Automatic: the same kind as the controller that drives it (DualSense, DualShock 4, else Xbox 360); a Steam Controller goes to SteamOS as itself. Steam Controller: only a Steam Controller (Bluetooth or its Puck) is passed through as itself, with trackpads, gyro and back buttons; other controllers appear as Xbox 360. Buttons, sticks, triggers and rumble (no touchpad, gyro or lightbar unless a DualSense is passed through)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обозначения и раскладка кнопок в Steam. Автоматически: тот же тип, что у управляющего контроллера (DualSense, DualShock 4, в остальных случаях Xbox 360); Steam Controller передаётся в SteamOS как есть. Steam Controller: напрямую передаётся только Steam Controller (по Bluetooth или через Puck) — с трекпадами, гироскопом и задними кнопками; остальные контроллеры отображаются как Xbox 360. Поддерживаются кнопки, стики, триггеры и вибрация (без сенсорной панели, гироскопа и световой панели, если DualSense не передаётся напрямую)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Steam 中的按键图标和布局。自动：与控制它的控制器类型一致（DualSense、DualShock 4，其他类型为 Xbox 360）；Steam Controller 以其本身直通到 SteamOS。Steam Controller：仅直通 Steam Controller（蓝牙或其 Puck 接收器），支持触控板、陀螺仪和背键；其他控制器显示为 Xbox 360。支持按键、摇杆、扳机和振动（除非直通 DualSense，否则不支持触摸板、陀螺仪或光条）。"
+          }
+        }
+      }
+    },
+    "Pass other controllers through" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Передавать другие контроллеры напрямую"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直通其他控制器"
+          }
+        }
+      }
+    },
+    "Automatic only. Joysticks and gamepads that macOS does not support go to SteamOS as themselves, on a free player whose SteamOS side supports it; configure their layout and calibration in SteamOS. SteamOS then talks to the device directly, including its configuration commands. Controllers macOS supports are not affected; multi-axis devices and devices that also act as a keyboard or mouse are never passed through." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только в режиме «Автоматически». Джойстики и геймпады, которые macOS не поддерживает, передаются в SteamOS как есть свободному игроку, если SteamOS это поддерживает; раскладка и калибровка настраиваются в SteamOS. SteamOS при этом работает с устройством напрямую, включая его команды настройки. Контроллеры, поддерживаемые macOS, это не затрагивает; многоосевые устройства и устройства, которые также работают как клавиатура или мышь, никогда не передаются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅限自动模式。macOS 不支持的操纵杆和手柄会按其本身直通到 SteamOS，分配给 SteamOS 端支持此功能的空闲玩家；请在 SteamOS 中设置布局和校准。此时 SteamOS 直接与设备通信，包括其配置命令。macOS 支持的控制器不受影响；多轴设备以及同时作为键盘或鼠标使用的设备永远不会被直通。"
           }
         }
       }

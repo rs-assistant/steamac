@@ -28,7 +28,7 @@ final class LauncherSettings: ObservableObject {
         // Mouse
         case autoCaptureGames, gameNames
         // Controller
-        case virtualPad, padType, dualSensePassthrough, controllerID, additionalPads, swapABXY, stickDeadzone
+        case virtualPad, padType, dualSensePassthrough, genericHIDPassthrough, controllerID, additionalPads, swapABXY, stickDeadzone
         // Sound
         case soundEnabled, soundOutputUID, soundVolume, soundMute, soundLatency
         // Streaming
@@ -372,6 +372,10 @@ final class LauncherSettings: ObservableObject {
     /// A DualSense that SteamOS gets as a DualSense is passed through as itself (HIDPassthrough):
     /// touchpad, motion, lights, mute button, rumble and triggers handled in SteamOS.
     @Published var dualSensePassthrough = true { didSet { save(.dualSensePassthrough, dualSensePassthrough) } }
+    /// Automatic also passes generic HID joysticks and gamepads macOS does not support through as
+    /// themselves (GenericHIDRouting). Off by default: SteamOS then talks to the raw device (feature
+    /// reports included), so the user opts in per Mac.
+    @Published var genericHIDPassthrough = false { didSet { save(.genericHIDPassthrough, genericHIDPassthrough) } }
     /// "" = first connected controller, else GamepadBridge.identifier(of:).
     @Published var controllerID = "" { didSet { save(.controllerID, controllerID) } }
     /// Further connected controllers are players 2…GamepadBridge.maxPads, each with a pad of its own.
@@ -477,6 +481,7 @@ final class LauncherSettings: ObservableObject {
         bool(.virtualPad, &virtualPad)
         if let s = d.string(forKey: Key.padType.rawValue).flatMap(PadType.init(rawValue:)) { padType = s }
         bool(.dualSensePassthrough, &dualSensePassthrough)
+        bool(.genericHIDPassthrough, &genericHIDPassthrough)
         string(.controllerID, &controllerID)
         bool(.additionalPads, &additionalPads)
         bool(.swapABXY, &swapABXY)
@@ -563,6 +568,7 @@ final class LauncherSettings: ObservableObject {
         case .virtualPad: guard let b else { return false }; virtualPad = b
         case .padType: guard let v = PadType(rawValue: text) else { return false }; padType = v
         case .dualSensePassthrough: guard let b else { return false }; dualSensePassthrough = b
+        case .genericHIDPassthrough: guard let b else { return false }; genericHIDPassthrough = b
         case .controllerID: controllerID = text
         case .additionalPads: guard let b else { return false }; additionalPads = b
         case .swapABXY: guard let b else { return false }; swapABXY = b
@@ -613,6 +619,7 @@ final class LauncherSettings: ObservableObject {
         metalHUD = fresh.metalHUD; superResolution = fresh.superResolution
         autoCaptureGames = fresh.autoCaptureGames
         virtualPad = fresh.virtualPad; padType = fresh.padType; dualSensePassthrough = fresh.dualSensePassthrough
+        genericHIDPassthrough = fresh.genericHIDPassthrough
         controllerID = fresh.controllerID; additionalPads = fresh.additionalPads; swapABXY = fresh.swapABXY
         stickDeadzone = fresh.stickDeadzone; soundEnabled = fresh.soundEnabled; soundOutputUID = fresh.soundOutputUID
         soundVolume = fresh.soundVolume; soundMute = fresh.soundMute; soundLatency = fresh.soundLatency

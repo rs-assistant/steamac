@@ -616,8 +616,21 @@ enum SteamControllerRouting {
 enum GenericHIDRouting {
     static let usages = [4, 5] // Joystick and Game Pad; Multi-axis (8), e.g. SpaceMouse, is excluded.
 
-    static func enabled(automatic: Bool, virtualPad: Bool) -> Bool {
-        automatic && virtualPad
+    /// Settings > Controller "Pass other controllers through" (off by default), Automatic and
+    /// Virtual controller on.
+    static func enabled(automatic: Bool, virtualPad: Bool, optedIn: Bool) -> Bool {
+        automatic && virtualPad && optedIn
+    }
+
+    /// Top-level collections that keep a device off the generic path even when it also has a
+    /// joystick or gamepad collection: pointer, mouse, keyboard, keypad (Generic Desktop 1, 2, 6, 7).
+    /// Passing such a composite device through would hand SteamOS its keystrokes or pointer reports
+    /// as well (a gaming keyboard with a joystick interface, a controller with a keyboard mode).
+    static let excludedUsages = [1, 2, 6, 7]
+
+    /// `conformsTo(page, usage)`: IOHIDDeviceConformsTo for the device.
+    static func isComposite(conformsTo: (Int, Int) -> Bool) -> Bool {
+        excludedUsages.contains { conformsTo(1, $0) }
     }
 
     static func accepts(usagePage: Int, usage: Int, knownController: Bool) -> Bool {
@@ -695,9 +708,19 @@ enum GenericHIDRouting {
         check(!matches("DJI Other"), "manufacturer prefix alone does not match")
         check(!matches(nil, "", product: nil, manufacturer: " \n"), "missing/blank names do not match")
         check(!matches("Xbox Wireless Controller", "Xbox One"), "unrelated published controller does not claim DJI")
-        check(enabled(automatic: true, virtualPad: true), "Automatic permits generic HID")
-        check(!enabled(automatic: true, virtualPad: false), "Virtual controller off excludes generic matching")
-        check(!enabled(automatic: false, virtualPad: true), "explicit pad kinds exclude generic matching")
+        check(enabled(automatic: true, virtualPad: true, optedIn: true), "Automatic with the opt-in permits generic HID")
+        check(!enabled(automatic: true, virtualPad: true, optedIn: false), "no generic HID without the opt-in")
+        check(!enabled(automatic: true, virtualPad: false, optedIn: true), "Virtual controller off excludes generic matching")
+        check(!enabled(automatic: false, virtualPad: true, optedIn: true), "explicit pad kinds exclude generic matching")
+        func composite(_ collections: [(Int, Int)]) -> Bool {
+            isComposite { page, usage in collections.contains { $0 == (page, usage) } }
+        }
+        check(!composite([(1, 5)]), "plain gamepad is not composite")
+        check(!composite([(1, 4), (0x0c, 1)]), "joystick with consumer controls is not composite")
+        check(composite([(1, 5), (1, 6)]), "gamepad with a keyboard collection is excluded")
+        check(composite([(1, 4), (1, 2)]), "joystick with a mouse collection is excluded")
+        check(composite([(1, 5), (1, 1)]), "gamepad with a pointer collection is excluded")
+        check(composite([(1, 5), (1, 7)]), "gamepad with a keypad collection is excluded")
         check(reportID(numbered: false, firstByte: 0x81) == 0, "unnumbered payload is not a report ID")
         check(reportID(numbered: true, firstByte: 0x81) == 0x81, "numbered output preserves report ID")
         check(productName(nil, fallback: "HID 2ca3:1020") == "HID 2ca3:1020", "missing product name")
@@ -961,7 +984,8 @@ final class GamepadBridge {
         for p in [settings.$controllerID.map { _ in () }.eraseToAnyPublisher(), settings.$additionalPads.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] in self?.assignControllers() })
         }
-        for p in [settings.$padType.map { _ in () }.eraseToAnyPublisher(), settings.$virtualPad.map { _ in () }.eraseToAnyPublisher()] {
+        for p in [settings.$padType.map { _ in () }.eraseToAnyPublisher(), settings.$virtualPad.map { _ in () }.eraseToAnyPublisher(),
+                  settings.$genericHIDPassthrough.map { _ in () }.eraseToAnyPublisher()] {
             subscriptions.append(p.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
                 guard let self else { return }
                 self.hid.matchSteamControllers = self.matchesValveControllers
@@ -1024,7 +1048,8 @@ final class GamepadBridge {
     }
 
     private var matchesGenericControllers: Bool {
-        GenericHIDRouting.enabled(automatic: (typeOverride ?? settings.padType) == .auto, virtualPad: settings.virtualPad)
+        GenericHIDRouting.enabled(automatic: (typeOverride ?? settings.padType) == .auto, virtualPad: settings.virtualPad,
+                                  optedIn: settings.genericHIDPassthrough)
     }
 
     /// Reconcile raw HID reservations only on topology/settings changes, never while querying a slot.
@@ -1211,6 +1236,7 @@ final class GamepadBridge {
     func diagnosticLines() -> [String] {
         var lines = ["Controller settings: pad=\((typeOverride ?? settings.padType).rawValue), "
             + "virtual=\(settings.virtualPad), DualSense passthrough=\(settings.dualSensePassthrough), "
+            + "generic HID passthrough=\(settings.genericHIDPassthrough), "
             + "stick deadzone=\(settings.stickDeadzone)% (uinput only)"]
         for s in slots where s.index == 0 || s.serviceReady || s.controller != nil { lines.append(s.stateLine) }
         let steam = hid.devices.filter(HIDPassthrough.isSteamController).count

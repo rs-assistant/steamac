@@ -219,6 +219,8 @@ final class HIDPassthrough {
     /// Report errors the guest can cause at any rate (bad sizes, refused or failing requests).
     private let failures = LogLimiter("hid passthrough: report errors")
     private var failedOpenCount = 0
+    /// Composite devices already reported as skipped (GenericHIDRouting.isComposite), by registry ID.
+    private var loggedComposites = Set<UInt64>()
     private var loggedOpenFailures = false
 
     /// Start watching for supported devices; false if the IOHIDManager cannot be opened.
@@ -327,6 +329,13 @@ final class HIDPassthrough {
                 IOHIDDeviceConformsTo(ref, 1, UInt32($0)) &&
                     GenericHIDRouting.accepts(usagePage: 1, usage: $0, knownController: false)
             }) else { return }
+            if GenericHIDRouting.isComposite(conformsTo: { IOHIDDeviceConformsTo(ref, UInt32($0), UInt32($1)) }) {
+                if loggedComposites.insert(id).inserted {
+                    let name = IOHIDDeviceGetProperty(ref, kIOHIDProductKey as CFString) as? String ?? "?"
+                    log("hid passthrough: not passing \(guestSnippet(name)) through: it also has a keyboard, keypad, mouse or pointer interface")
+                }
+                return
+            }
             let candidate: GenericDevice
             if let cached = genericDevices[id] { candidate = cached }
             else {

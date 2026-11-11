@@ -495,10 +495,13 @@ DualSense 驱动操作 `/dev/hidraw*`，Steam Input 获得触摸板、陀螺仪�
 （`hid-input`）；输出报告、GET_REPORT 与 SET_REPORT 回控制器（`hid-output`、
 `hid-get` / `hid-get-reply`、`hid-set` / `hid-set-reply`，hex，报告 ID 在首）。客户机跟不上时丢弃旧输入报告而非排队：每份报告都携带完整状态。A/B 互换与摇杆死区对直通控制器无效。GameController 不报告控制器对应哪个 HID 设备：多 DualSense 时直通第一个找到的。无 `caps hid` 的旧客户机层仍获得 uinput 手柄。
 
-**通用 HID 操纵杆和手柄。** **自动**模式还会将 GameController 未发布的 Generic Desktop
+**通用 HID 操纵杆和手柄。** 开启 Settings > Controller 的**直通其他控制器**（默认关闭）后，
+**自动**模式还会将 GameController 未发布的 Generic Desktop
 设备（usage page 1，Joystick 4、Game Pad 5）按其本身直通，
 例如 DJI FPV Remote Controller 2（`2ca3:1020`）和 Spektrum SLT6（`35cf:04fb`）。
-默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。
+默认有意不匹配 Multi-axis Controller（8），例如 SpaceMouse。同时带有 Pointer（1）、Mouse（2）、
+Keyboard（6）或 Keypad（7）集合的设备永远不会直通（日志记录一次），否则 SteamOS 也会收到它的按键或指针报告。
+客户机直接与直通设备通信，包括会改变其配置的 feature report，因此此功能需要手动开启。
 现有 raw-HID/uhid 路径保留描述符、ID 和报告，由客户机的 `hid-generic`、SDL 和 Steam
 处理布局与校准。这不是 Xbox 模拟：请在 SteamOS/Steam Input 中设置，而不是使用启动器的
 GameController 实时测试、A/B 互换或死区设置。需要支持 `caps hid` 的新版客户机层。
@@ -508,7 +511,7 @@ HID 的可用空位（玩家 2–4 需启用**更多控制器**）。空闲位�
 控制器优先：通用 HID 会让出位置并移到下一个空位，没有空位则等待。蓝牙 LE Steam Controller
 仍保留固定位置，不会被挤走。旧客户机没有 `caps hid` 时，通用 HID 不预留位置，
 也不能唤醒暂停的虚拟机。
-关闭**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
+关闭**直通其他控制器**或**虚拟控制器**（`--no-gamepad`），或在**在 SteamOS 中显示为**选择明确的类型，
 即可停止通用 HID 的发现与直通。`pad state` 会列出名称、VID/PID、registry ID 和玩家位置。
 
 为避免重复输入，只有 `GCController.supportsHIDDevice` 为 true（按 HID registry ID 缓存），
