@@ -1397,8 +1397,9 @@ the background without delaying startup from `https://api.github.com/repos/fxgl/
 (unauthenticated, 10 s timeout; drafts and prereleases are excluded) and compares its `vX.Y[.Z]` tag with
 its own version (`CFBundleShortVersionString`, numerically: 1.3.10 > 1.3.9). If a new version is
 available, the window shows “FX Steam Launcher X.Y is available — you have …”, with the release
-description and buttons **Download** (opens the release's `.dmg` in a browser, or the release page
-otherwise), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
+description, a note that it is the upstream project's release (this fork publishes none and is
+updated by pulling and rebuilding) and buttons **View Release** (opens the release page in a browser,
+never the `.dmg`: that is upstream's build, which would replace this one and its changes), **Skip This Version** (this version is no longer offered at startup), and **Remind Me Later**
 (offers it again at the next check). The menu item checks immediately — without the 6-hour limit and
 including skipped versions — and reports “You're up to date” or an error; network and HTTP errors at
 startup are only logged (`update: …`). The dev launcher `work/out/steamac-vm` does not check at startup

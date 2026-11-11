@@ -2286,22 +2286,6 @@
         }
       }
     },
-    "Download" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузить"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下载"
-          }
-        }
-      }
-    },
     "Downloaded data is kept; creating the disk again continues from there." : {
       "localizations" : {
         "ru" : {
@@ -9876,6 +9860,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仅限自动模式。macOS 不支持的操纵杆和手柄会按其本身直通到 SteamOS，分配给 SteamOS 端支持此功能的空闲玩家；请在 SteamOS 中设置布局和校准。此时 SteamOS 直接与设备通信，包括其配置命令。macOS 支持的控制器不受影响；多轴设备以及同时作为键盘或鼠标使用的设备永远不会被直通。"
+          }
+        }
+      }
+    },
+    "View Release" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть выпуск"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看发布"
+          }
+        }
+      }
+    },
+    "This is a release of the upstream project (fxgl/steamac). This copy was built from the rs-assistant/steamac source: to update it, pull the source and rebuild. Installing the upstream app replaces this build and its changes." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это выпуск исходного проекта (fxgl/steamac). Эта копия собрана из исходного кода rs-assistant/steamac: чтобы обновить её, получите свежий исходный код и пересоберите. Установка приложения исходного проекта заменит эту сборку и её изменения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这是上游项目（fxgl/steamac）的版本。此副本由 rs-assistant/steamac 的源代码构建：要更新，请拉取源代码并重新构建。安装上游应用会替换此构建及其修改。"
           }
         }
       }

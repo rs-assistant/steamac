@@ -129,8 +129,10 @@ cp -R "work/out/FX Steam Launcher.app" /Applications/
   - SSH：關閉（Settings → Advanced 可開啟）。
   - 分享遊戲統計：關閉；關閉時 Games 分頁也不會向統計服務查詢推薦設定。
   - LAN Remote Play：關閉；開啟時只在 Mac 的區域網路位址上接受連線。
-- **更新通知**：自己 build 的版本只會提示 upstream 有新版，不會自動安裝。要更新請依第 8 節重新 build，
-  不要安裝通知裡的 DMG（那是 upstream 的 build，不含這個 fork 的修改）。
+- **更新通知**：自己 build 的版本只會提示 upstream 有新版，不會自動安裝。視窗的按鈕是 **View Release**，
+  只會打開 upstream 的 release 頁面，不會下載 DMG。要更新請依第 8 節重新 build，不要安裝 upstream 的 DMG
+  （它不含這個 fork 的修改）。這個 fork 第一次啟動時會把「crash report 關閉」明確寫進設定檔，所以就算
+  裝了 upstream 版，crash report 仍維持關閉。
 - **log**：`~/Library/Logs/es.fxgam.steamac/steamac-vm.log`
 
 ## 7. 建議確認的項目

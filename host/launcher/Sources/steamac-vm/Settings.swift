@@ -429,6 +429,19 @@ final class LauncherSettings: ObservableObject {
         defaults = domain == Bundle.main.bundleIdentifier ? .standard : (UserDefaults(suiteName: domain) ?? .standard)
         if domain == LauncherSettings.defaultDomain { LauncherSettings.migrateLegacy(into: defaults) }
         load()
+        pinChangedDefaults()
+    }
+
+    /// Settings whose default this fork changed from upstream (fxgl/steamac): upstream reads a
+    /// missing key with its own default (sendCrashReports: on). Writing the effective value keeps
+    /// the choice if upstream's app ever reads these preferences (its DMG installed over this
+    /// build); a value the user saved is left alone.
+    private func pinChangedDefaults() {
+        let pinned: [(Key, Bool)] = [(.sendCrashReports, sendCrashReports)]
+        for (key, value) in pinned where defaults.object(forKey: key.rawValue) == nil {
+            defaults.set(value, forKey: key.rawValue)
+            log("settings: wrote \(key.rawValue)=\(value) (this fork's default)")
+        }
     }
 
     private static func migrateLegacy(into defaults: UserDefaults) {
@@ -630,6 +643,7 @@ final class LauncherSettings: ObservableObject {
         sharedLibrary = fresh.sharedLibrary; steamosBranch = fresh.steamosBranch; steamClient = fresh.steamClient
         vulkanDriver = fresh.vulkanDriver; wmtr = fresh.wmtr; wmtrLibrary = fresh.wmtrLibrary
         loading = false
+        pinChangedDefaults()
         reloadGames()
         log("settings: reset to defaults")
     }
