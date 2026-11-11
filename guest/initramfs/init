@@ -940,6 +940,8 @@ fi
 # steamac.share=<guest path>. A runtime mount unit (lives only for this boot, like
 # the masks above) mounts it after SteamOS has populated the home. Wanted, not
 # required, by multi-user.target: a boot without the device still completes.
+# nosuid,nodev: programs on the Mac can write the folder, so a setuid binary or a
+# device node placed there must not give SteamOS root or raw devices.
 SHARE=$(getarg steamac.share)
 if [ -n "$SHARE" ]; then
     # Same rule as the launcher (Options.isValidShareMount): a subdirectory of /home/steamos/
@@ -972,7 +974,7 @@ Conflicts=umount.target
 What=macshare
 Where=$SHARE
 Type=virtiofs
-Options=defaults
+Options=defaults,nosuid,nodev
 TimeoutSec=15
 EOF
         ln -sfn "../$_unit" "/run/systemd/system/multi-user.target.wants/$_unit"
